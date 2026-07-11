@@ -1,0 +1,53 @@
+services:
+  # 1. Your Primary Database
+  delivery-mongo:
+    image: mongo:latest
+    container_name: delivery-mongo
+    ports:
+      - "27018:27017"
+    volumes:
+      - mongo_data:/data/db
+
+  # 2. Your High-Speed Memory Cache
+  delivery-redis:
+    image: redis:latest
+    container_name: delivery-redis
+    ports:
+      - "6379:6379"
+
+  # 3. Your Security & Identity Server
+  delivery-keycloak:
+    image: quay.io/keycloak/keycloak:latest
+    container_name: delivery-keycloak
+    environment:
+      - KEYCLOAK_ADMIN=admin
+      - KEYCLOAK_ADMIN_PASSWORD=admin
+    ports:
+      - "9090:8080"
+    volumes:
+      - ./keycloak-themes/delivery-theme:/opt/keycloak/themes/delivery-theme
+      - keycloak_data:/opt/keycloak/data
+      # Add this new line to map your export file into the container!
+      - ./realm-export.json:/opt/keycloak/data/import/realm-export.json
+    # Change the command to automatically import the file on startup!
+    command: start-dev --import-realm
+
+  # 4. Your Spring WebFlux Backend
+  delivery-backend:
+    build: .
+    container_name: delivery-backend
+    ports:
+      - "8080:8080"
+    # THIS IS THE CRITICAL ADDITION:
+    environment:
+      - KEYCLOAK_BASE_URL=http://${HOST_IP}:9090
+      - KEYCLOAK_CLIENT_SECRET=${KEYCLOAK_SECRET}
+    depends_on:
+      - delivery-mongo
+      - delivery-redis
+      - delivery-keycloak
+
+# Persistent Volumes for Data Survival
+volumes:
+  mongo_data:
+  keycloak_data:
