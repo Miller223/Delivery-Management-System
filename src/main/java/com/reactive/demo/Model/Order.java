@@ -26,7 +26,7 @@ public class Order {
     
     private String customerId;
     
-    private List<String> restaurantsId; 
+    List<String> restaurantsId;
     
     private String riderId; 
     

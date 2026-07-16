@@ -149,14 +149,13 @@ public class OrderServiceImpl implements OrderService {
     @Override
     public Mono<OrderDetailResponseDto> getOrderDetails(String orderId) {
         return orderRepository.findById(orderId)
-                // HINT 1: Add <Order> inside Mono.error
-                .switchIfEmpty(Mono.<Order>error(new ResourceNotFoundException("Order not found!")))
-                // HINT 2: Explicitly declare (Order order) instead of just order
-                .map((Order order) -> {
+                .map(order -> {
                     
+                    // Extract just the address string from the DeliveryLocation object
                     String address = (order.getDeliveryLocation() != null) 
                             ? order.getDeliveryLocation().getAddress() : null;
 
+                    // Map the items to include the restaurantId for each item
                     List<OrderDetailItemDto> mappedItems = order.getItems().stream()
                             .map(item -> OrderDetailItemDto.builder()
                                     .restaurantId(item.getRestaurantId())
@@ -165,17 +164,19 @@ public class OrderServiceImpl implements OrderService {
                                     .quantity(item.getQuantity())
                                     .priceAtPurchase(item.getPriceAtPurchase())
                                     .build())
-                            .collect(java.util.stream.Collectors.toList());
+                            .collect(Collectors.toList());
 
+                    // Build the final response DTO (without the redundant array)
                     return OrderDetailResponseDto.builder()
                             .orderId(order.getId())
-                            .restaurantIds(order.getRestaurantsId()) 
                             .status(order.getStatus())
                             .totalAmount(order.getTotalAmount())
                             .deliveryAddress(address)
                             .items(mappedItems)
                             .build();
-                });
+                })
+                // Throws an error if the ID doesn't exist in the database
+                .switchIfEmpty(Mono.error(new ResourceNotFoundException("Order not found!")));
     }
     
 }

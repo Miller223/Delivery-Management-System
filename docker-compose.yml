@@ -40,8 +40,16 @@ services:
       - "8080:8080"
     # THIS IS THE CRITICAL ADDITION:
     environment:
-      - KEYCLOAK_BASE_URL=http://${HOST_IP}:9090
+      # Route to Keycloak using its internal container name and internal port (8080)
+      - KEYCLOAK_BASE_URL=http://delivery-keycloak:8080
       - KEYCLOAK_CLIENT_SECRET=${KEYCLOAK_SECRET}
+      
+      # Route to MongoDB using its internal container name and internal port (27017)
+      - spring.data.mongodb.uri=mongodb://delivery-mongo:27017/delivery_db
+      
+      # Route to Redis using its internal container name
+      - spring.data.redis.host=delivery-redis
+      - spring.data.redis.port=6379
     depends_on:
       - delivery-mongo
       - delivery-redis
