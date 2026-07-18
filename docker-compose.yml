@@ -1,5 +1,6 @@
+version: "3.8"
+
 services:
-  # 1. Your Primary Database
   delivery-mongo:
     image: mongo:latest
     container_name: delivery-mongo
@@ -8,54 +9,53 @@ services:
     volumes:
       - mongo_data:/data/db
 
-  # 2. Your High-Speed Memory Cache
   delivery-redis:
     image: redis:latest
     container_name: delivery-redis
     ports:
       - "6379:6379"
 
-  # 3. Your Security & Identity Server
   delivery-keycloak:
     image: quay.io/keycloak/keycloak:latest
     container_name: delivery-keycloak
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - exec 3<>/dev/tcp/127.0.0.1/8080 && exit 0 || exit 1
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
     environment:
       - KEYCLOAK_ADMIN=admin
       - KEYCLOAK_ADMIN_PASSWORD=admin
+      - KC_HOSTNAME=localhost
+      - KC_HOSTNAME_PORT=9090
+      - KC_HOSTNAME_STRICT=false
     ports:
       - "9090:8080"
     volumes:
       - ./keycloak-themes/delivery-theme:/opt/keycloak/themes/delivery-theme
       - keycloak_data:/opt/keycloak/data
-      # Add this new line to map your export file into the container!
       - ./realm-export.json:/opt/keycloak/data/import/realm-export.json
-    # Change the command to automatically import the file on startup!
     command: start-dev --import-realm
 
-  # 4. Your Spring WebFlux Backend
   delivery-backend:
     build: .
     container_name: delivery-backend
     ports:
       - "8080:8080"
-    # THIS IS THE CRITICAL ADDITION:
     environment:
-      # Route to Keycloak using its internal container name and internal port (8080)
       - KEYCLOAK_BASE_URL=http://delivery-keycloak:8080
       - KEYCLOAK_CLIENT_SECRET=${KEYCLOAK_SECRET}
-      
-      # Route to MongoDB using its internal container name and internal port (27017)
-      - spring.data.mongodb.uri=mongodb://delivery-mongo:27017/delivery_db
-      
-      # Route to Redis using its internal container name
-      - spring.data.redis.host=delivery-redis
-      - spring.data.redis.port=6379
-    depends_on:
-      - delivery-mongo
-      - delivery-redis
-      - delivery-keycloak
 
-# Persistent Volumes for Data Survival
+      # THIS IS THE FIX: Fetch keys from the internal Docker network directly
+      - SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_JWK_SET_URI=http://delivery-keycloak:8080/realms/delivery-realm/protocol/openid-connect/certs
+
+    depends_on:
+      delivery-keycloak:
+        condition: service_healthy
+
 volumes:
   mongo_data:
   keycloak_data:

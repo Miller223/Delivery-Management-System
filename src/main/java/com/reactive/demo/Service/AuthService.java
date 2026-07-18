@@ -13,7 +13,6 @@ import com.reactive.demo.Repository.UserRepository;
 
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpHeaders;
-import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
 import org.springframework.web.reactive.function.BodyInserters;
@@ -29,9 +28,9 @@ public class AuthService {
 
     private final WebClient webClient;
     private final ObjectMapper objectMapper;
-    private final UserRepository userRepository; // 1. Inject the MongoDB Repository
+    private final UserRepository userRepository;
 
-    @Value("${KEYCLOAK_CLIENT_SECRET:zRes5IEYe6my1g8kTWraIWlnZZgeHluN}")
+    @Value("${KEYCLOAK_CLIENT_SECRET}") 
     private String CLIENT_SECRET;
 
     @Value("${KEYCLOAK_BASE_URL:http://localhost:9090}")
@@ -101,23 +100,22 @@ public class AuthService {
                 .uri(keycloakBaseUrl + "/realms/delivery-realm/protocol/openid-connect/token")
                 .contentType(MediaType.APPLICATION_FORM_URLENCODED)
                 .body(BodyInserters.fromFormData("client_id", "delivery-app")
-                        .with("client_secret", CLIENT_SECRET) 
+                        .with("client_secret", CLIENT_SECRET)
                         .with("grant_type", "client_credentials"))
                 .retrieve()
                 .bodyToMono(Map.class)
                 .flatMap(tokenMap -> {
                     String adminToken = (String) tokenMap.get("access_token");
                     
+                    // Email Verification is RESTORED here
                     Map<String, Object> keycloakUser = Map.of(
                             "username", request.getEmail(),
                             "email", request.getEmail(),
                             "firstName", request.getName(),
-                            "lastName", "User",            
+                            "lastName", "User",
                             "enabled", true,
                             "requiredActions", List.of("VERIFY_EMAIL"), 
-                            "credentials", List.of(
-                                    Map.of("type", "password", "value", request.getPassword(), "temporary", false)
-                            )
+                            "credentials", List.of(Map.of("type", "password", "value", request.getPassword(), "temporary", false))
                     );
 
                     return webClient.post()
@@ -125,45 +123,36 @@ public class AuthService {
                             .header(HttpHeaders.AUTHORIZATION, "Bearer " + adminToken)
                             .contentType(MediaType.APPLICATION_JSON)
                             .bodyValue(keycloakUser)
-                            .exchangeToMono(clientResponse -> {
-                                if (clientResponse.statusCode().equals(HttpStatus.CREATED)) {
-                                    String location = clientResponse.headers().header(HttpHeaders.LOCATION).get(0);
-                                    String newUserId = location.substring(location.lastIndexOf("/") + 1);
-                                    
-                                    String sendEmailUri = keycloakBaseUrl + "/admin/realms/delivery-realm/users/" + newUserId + "/send-verify-email?client_id=delivery-app";
-                                    
-                                    return webClient.put()
-                                            .uri(sendEmailUri)
-                                            .header(HttpHeaders.AUTHORIZATION, "Bearer " + adminToken)
-                                            .retrieve()
-                                            // 1. Force the stream to emit a real object instead of Void
-                                            .toBodilessEntity() 
-                                            // 2. Safely chain the database operation
-                                            .flatMap(response -> {
-                                                System.out.println("====== KEYCLOAK SUCCESS: SAVING TO MONGO... ======");
-                                                User newUser = User.builder()
-                                                        .id(newUserId) 
-                                                        .name(request.getName())
-                                                        .email(request.getEmail())
-                                                        .role("CUSTOMER")
-                                                        .build();
-                                                return userRepository.save(newUser);
-                                            })
-                                            // 3. Log the exact moment Mongo successfully writes the data
-                                            .doOnSuccess(savedUser -> System.out.println("====== MONGO SAVE COMPLETE: " + savedUser.getId() + " ======"))
-                                            // 4. Map the newly saved database entity to your DTO
-                                            .map(savedUser -> SignupResponseDto.builder()
-                                                    .userId(savedUser.getId())
-                                                    .name(savedUser.getName())
-                                                    .email(savedUser.getEmail())
-                                                    .role(savedUser.getRole()) 
-                                                    .build());
-                                            
-                                }
-                                return clientResponse.createException().flatMap(Mono::error);
+                            .retrieve()
+                            .onStatus(status -> status.value() == 409, 
+                                      response -> Mono.error(new AuthenticationFailedException("Email address is already in use.")))
+                            .toBodilessEntity()
+                            .flatMap(clientResponse -> {
+                                String location = clientResponse.getHeaders().getLocation().getPath();
+                                String newUserId = location.substring(location.lastIndexOf("/") + 1);
+                                
+                                // Email Sending call is RESTORED here
+                                return webClient.put()
+                                        .uri(keycloakBaseUrl + "/admin/realms/delivery-realm/users/" + newUserId + "/send-verify-email?client_id=delivery-app")
+                                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + adminToken)
+                                        .retrieve()
+                                        .toBodilessEntity()
+                                        .flatMap(r -> userRepository.save(User.builder()
+                                                .id(newUserId)
+                                                .name(request.getName())
+                                                .email(request.getEmail())
+                                                .role("CUSTOMER")
+                                                .build()))
+                                        .map(savedUser -> SignupResponseDto.builder()
+                                                .userId(savedUser.getId())
+                                                .name(savedUser.getName())
+                                                .email(savedUser.getEmail())
+                                                .role(savedUser.getRole())
+                                                .build());
                             });
                 });
     }
+
 
 
     public Mono<UserInfoDto> getUserInfo(String userId) {
