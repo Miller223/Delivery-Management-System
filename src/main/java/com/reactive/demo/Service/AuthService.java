@@ -43,7 +43,7 @@ public class AuthService {
         this.userRepository = userRepository;
     }
     
-    //zRes5IEYe6my1g8kTWraIWlnZZgeHluN
+   
 
     public Mono<LoginResponseDto> login(LoginRequestDto request) {
         return webClient.post()
@@ -56,7 +56,7 @@ public class AuthService {
                         .with("grant_type", "password"))
                 .retrieve()
                 .bodyToMono(Map.class)
-                .map(response -> {
+                .flatMap(response -> {
                     String token = (String) response.get("access_token");
                     try {
                         String[] chunks = token.split("\\.");
@@ -65,23 +65,61 @@ public class AuthService {
 
                         String userRole = "CUSTOMER"; 
                         if (jwtNode.has("realm_access") && jwtNode.get("realm_access").has("roles")) {
+                            boolean isAdmin = false;
+                            boolean isRider = false;
+                            
                             for (JsonNode roleNode : jwtNode.get("realm_access").get("roles")) {
                                 String r = roleNode.asText().toUpperCase();
-                                if (r.equals("ADMIN") || r.equals("RIDER") || r.equals("CUSTOMER")) {
-                                    userRole = r;
-                                    break; 
-                                }
+                                if (r.equals("ADMIN")) isAdmin = true;
+                                if (r.equals("RIDER")) isRider = true;
+                            }
+                            
+                            if (isAdmin) {
+                                userRole = "ADMIN";
+                            } else if (isRider) {
+                                userRole = "RIDER";
                             }
                         }
 
-                        return LoginResponseDto.builder()
-                                .userId(jwtNode.get("sub").asText())
-                                .name(jwtNode.has("given_name") ? jwtNode.get("given_name").asText() : request.getEmail())
-                                .role(userRole)
+                        String userId = jwtNode.get("sub").asText();
+                        
+                        // CHANGED: Grab the full "name" from the JWT
+                        String name = request.getEmail();
+                        if (jwtNode.has("name")) {
+                            name = jwtNode.get("name").asText();
+                        } else if (jwtNode.has("given_name")) {
+                            name = jwtNode.get("given_name").asText();
+                            if (jwtNode.has("family_name")) {
+                                name += " " + jwtNode.get("family_name").asText();
+                            }
+                        }
+                        
+                        final String finalUserRole = userRole;
+                        final String finalName = name;
+
+                        LoginResponseDto loginResponse = LoginResponseDto.builder()
+                                .userId(userId)
+                                .name(finalName)
+                                .role(finalUserRole)
                                 .token(token)
                                 .build();
+
+                        return userRepository.existsById(userId)
+                                .flatMap(exists -> {
+                                    if (!exists) {
+                                        User syncUser = User.builder()
+                                                .id(userId)
+                                                .name(finalName)
+                                                .email(request.getEmail())
+                                                .role(finalUserRole)
+                                                .build();
+                                        return userRepository.save(syncUser).thenReturn(loginResponse);
+                                    }
+                                    return Mono.just(loginResponse);
+                                });
+
                     } catch (Exception e) {
-                        throw new RuntimeException("Error parsing identity token");
+                        return Mono.error(new RuntimeException("Error parsing identity token"));
                     }
                 })
                 .onErrorResume(org.springframework.web.reactive.function.client.WebClientResponseException.class, ex -> {
@@ -163,7 +201,7 @@ public class AuthService {
                         .name(user.getName())
                         .email(user.getEmail())
                         .image(user.getImage())
-                        .phone(user.getPhone()) // Actually pulling real data from Mongo now
+                        .phone(user.getPhone())
                         .role(user.getRole())
                         .build());
     }

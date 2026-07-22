@@ -5,8 +5,11 @@ import com.reactive.demo.Dto.RestResponse;
 import com.reactive.demo.Dto.CustomerApp.OrderDetailResponseDto;
 import com.reactive.demo.Dto.CustomerApp.OrderRequestDto;
 import com.reactive.demo.Dto.CustomerApp.OrderResponseDto;
+import com.reactive.demo.Dto.CustomerApp.UserOrderHistoryDto;
 import com.reactive.demo.Service.OrderService;
 import com.reactive.demo.Utils.ResponseUtils;
+
+import java.util.List;
 
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
@@ -41,6 +44,17 @@ public class OrderController {
                         HttpStatus.OK, 
                         "Order details fetched",
                         response
+                ));
+    }
+    
+    @GetMapping("/getUserOrders/{userId}")
+    public Mono<ResponseEntity<RestResponse<List<UserOrderHistoryDto>>>> getUserOrders(@PathVariable String userId) {
+        return orderService.getUserOrders(userId)
+                .collectList()
+                .flatMap(orders -> ResponseUtils.success(
+                        HttpStatus.OK, 
+                        "User orders history retrieved",
+                        orders
                 ));
     }
 }

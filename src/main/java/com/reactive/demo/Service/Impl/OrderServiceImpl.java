@@ -8,6 +8,7 @@ import com.reactive.demo.Dto.CustomerApp.OrderDetailResponseDto;
 import com.reactive.demo.Dto.CustomerApp.OrderItemRequestDto;
 import com.reactive.demo.Dto.CustomerApp.OrderRequestDto;
 import com.reactive.demo.Dto.CustomerApp.OrderResponseDto;
+import com.reactive.demo.Dto.CustomerApp.UserOrderHistoryDto;
 import com.reactive.demo.Dto.Exception.ResourceNotFoundException;
 import com.reactive.demo.Model.DeliveryLocation;
 import com.reactive.demo.Model.Order;
@@ -21,6 +22,8 @@ import com.reactive.demo.Service.OrderService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+
+import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
 import java.time.LocalDateTime;
@@ -178,5 +181,40 @@ public class OrderServiceImpl implements OrderService {
                 // Throws an error if the ID doesn't exist in the database
                 .switchIfEmpty(Mono.error(new ResourceNotFoundException("Order not found!")));
     }
+    
+    @Override
+    public Flux<UserOrderHistoryDto> getUserOrders(String userId) {
+        return orderRepository.findByCustomerIdOrderByCreatedAtDesc(userId)
+                .flatMap(order -> {
+                    // Grab the very first restaurant ID in the order
+                    String firstRestaurantId = (order.getRestaurantsId() != null && !order.getRestaurantsId().isEmpty()) 
+                            ? order.getRestaurantsId().get(0) : null;
+                    
+                    Mono<String> restaurantNameMono = Mono.just("Unknown Restaurant");
+                    
+                    if (firstRestaurantId != null) {
+                        restaurantNameMono = restaurantRepository.findById(firstRestaurantId)
+                                .map(restaurant -> {
+                                    String name = restaurant.getName();
+                                    // Append "+ X more" if the order has items from multiple restaurants
+                                    if (order.getRestaurantsId().size() > 1) {
+                                        name += " + " + (order.getRestaurantsId().size() - 1) + " more";
+                                    }
+                                    return name;
+                                })
+                                .defaultIfEmpty("Unknown Restaurant");
+                    }
+
+                    // Build the DTO using the fetched name
+                    return restaurantNameMono.map(name -> UserOrderHistoryDto.builder()
+                            .orderId(order.getId())
+                            .restaurantName(name)
+                            .totalAmount(order.getTotalAmount())
+                            .status(order.getStatus())
+                            .createdAt(order.getCreatedAt())
+                            .build());
+                });
+    }
+
     
 }

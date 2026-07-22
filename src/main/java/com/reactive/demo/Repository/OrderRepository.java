@@ -8,7 +8,7 @@ import reactor.core.publisher.Flux;
 
 public interface OrderRepository extends ReactiveMongoRepository<Order, String>{
 	
-	Flux<Order> findByCustomerId(String customerId);
+    Flux<Order> findByCustomerIdOrderByCreatedAtDesc(String customerId);
 	
 
 }

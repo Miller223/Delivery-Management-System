@@ -13,12 +13,11 @@ import lombok.NoArgsConstructor;
 @NoArgsConstructor
 public class UserOrderHistoryDto {
 	
-	private String orderId;
-	private String restaurantName;
-	private double totalAmount;
-	private String status;
-    private LocalDateTime createdAt;
-	
+	   private String orderId;
+	    private String restaurantName;
+	    private Double totalAmount;
+	    private String status;
+	    private LocalDateTime createdAt;
 	
 
 }
