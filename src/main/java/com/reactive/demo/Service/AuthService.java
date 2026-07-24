@@ -3,13 +3,18 @@ package com.reactive.demo.Service;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.reactive.demo.Dto.*;
+import com.reactive.demo.Dto.AdminApp.CreateRiderRequestDto;
+import com.reactive.demo.Dto.AdminApp.RiderResponseDto;
+import com.reactive.demo.Dto.AdminApp.VehicleResponseDto; // ADD THIS LINE (Or CustomerApp if you put it there!)
 import com.reactive.demo.Dto.CustomerApp.UpdateUserRequestDto;
 import com.reactive.demo.Dto.CustomerApp.UserInfoDto;
 import com.reactive.demo.Dto.Exception.AccountNotVerifiedException;
 import com.reactive.demo.Dto.Exception.AuthenticationFailedException;
 import com.reactive.demo.Dto.Exception.ResourceNotFoundException;
 import com.reactive.demo.Model.User;
+import com.reactive.demo.Model.Vehicle;
 import com.reactive.demo.Repository.UserRepository;
+import com.reactive.demo.Repository.VehicleRepository;
 
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpHeaders;
@@ -29,6 +34,7 @@ public class AuthService {
     private final WebClient webClient;
     private final ObjectMapper objectMapper;
     private final UserRepository userRepository;
+    private final VehicleRepository vehicleRepository;
 
     @Value("${KEYCLOAK_CLIENT_SECRET}") 
     private String CLIENT_SECRET;
@@ -36,14 +42,28 @@ public class AuthService {
     @Value("${KEYCLOAK_BASE_URL:http://localhost:9090}")
     private String keycloakBaseUrl;
 
-    // 2. Add UserRepository to the constructor
-    public AuthService(WebClient.Builder webClientBuilder, ObjectMapper objectMapper, UserRepository userRepository) {
+    public AuthService(WebClient.Builder webClientBuilder, ObjectMapper objectMapper, 
+                       UserRepository userRepository, VehicleRepository vehicleRepository) {
         this.webClient = webClientBuilder.build();
         this.objectMapper = objectMapper;
         this.userRepository = userRepository;
+        this.vehicleRepository = vehicleRepository;
     }
     
-   
+    private Mono<String> getAdminToken() {
+        String realm = "delivery-realm";
+        String clientId = "delivery-app"; 
+
+        return webClient.post()
+                .uri(keycloakBaseUrl + "/realms/" + realm + "/protocol/openid-connect/token")
+                .header(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_FORM_URLENCODED_VALUE)
+                .body(BodyInserters.fromFormData("grant_type", "client_credentials")
+                        .with("client_id", clientId)
+                        .with("client_secret", CLIENT_SECRET)) // FIX: Uses global secret!
+                .retrieve()
+                .bodyToMono(com.fasterxml.jackson.databind.JsonNode.class)
+                .map(jsonNode -> jsonNode.get("access_token").asText());
+    }
 
     public Mono<LoginResponseDto> login(LoginRequestDto request) {
         return webClient.post()
@@ -83,7 +103,6 @@ public class AuthService {
 
                         String userId = jwtNode.get("sub").asText();
                         
-                        // CHANGED: Grab the full "name" from the JWT
                         String name = request.getEmail();
                         if (jwtNode.has("name")) {
                             name = jwtNode.get("name").asText();
@@ -97,26 +116,32 @@ public class AuthService {
                         final String finalUserRole = userRole;
                         final String finalName = name;
 
-                        LoginResponseDto loginResponse = LoginResponseDto.builder()
-                                .userId(userId)
-                                .name(finalName)
-                                .role(finalUserRole)
-                                .token(token)
-                                .build();
+                        return userRepository.findById(userId)
+                                .map(existingUser -> LoginResponseDto.builder()
+                                        .userId(userId)
+                                        .name(existingUser.getName()) 
+                                        .role(finalUserRole)
+                                        .token(token)
+                                        .img(existingUser.getImage()) // Attached Image from DB!
+                                        .build())
+                                .switchIfEmpty(Mono.defer(() -> {
+                                    User syncUser = User.builder()
+                                            .id(userId)
+                                            .name(finalName)
+                                            .email(request.getEmail())
+                                            .role(finalUserRole)
+                                            .build();
+                                            
+                                    LoginResponseDto loginResponse = LoginResponseDto.builder()
+                                            .userId(userId)
+                                            .name(finalName)
+                                            .role(finalUserRole)
+                                            .token(token)
+                                            .img(null)
+                                            .build();
 
-                        return userRepository.existsById(userId)
-                                .flatMap(exists -> {
-                                    if (!exists) {
-                                        User syncUser = User.builder()
-                                                .id(userId)
-                                                .name(finalName)
-                                                .email(request.getEmail())
-                                                .role(finalUserRole)
-                                                .build();
-                                        return userRepository.save(syncUser).thenReturn(loginResponse);
-                                    }
-                                    return Mono.just(loginResponse);
-                                });
+                                    return userRepository.save(syncUser).thenReturn(loginResponse);
+                                }));
 
                     } catch (Exception e) {
                         return Mono.error(new RuntimeException("Error parsing identity token"));
@@ -145,12 +170,11 @@ public class AuthService {
                 .flatMap(tokenMap -> {
                     String adminToken = (String) tokenMap.get("access_token");
                     
-                    // Email Verification is RESTORED here
                     Map<String, Object> keycloakUser = Map.of(
                             "username", request.getEmail(),
                             "email", request.getEmail(),
                             "firstName", request.getName(),
-                            "lastName", "User",
+                            "lastName", "",
                             "enabled", true,
                             "requiredActions", List.of("VERIFY_EMAIL"), 
                             "credentials", List.of(Map.of("type", "password", "value", request.getPassword(), "temporary", false))
@@ -169,7 +193,6 @@ public class AuthService {
                                 String location = clientResponse.getHeaders().getLocation().getPath();
                                 String newUserId = location.substring(location.lastIndexOf("/") + 1);
                                 
-                                // Email Sending call is RESTORED here
                                 return webClient.put()
                                         .uri(keycloakBaseUrl + "/admin/realms/delivery-realm/users/" + newUserId + "/send-verify-email?client_id=delivery-app")
                                         .header(HttpHeaders.AUTHORIZATION, "Bearer " + adminToken)
@@ -191,7 +214,107 @@ public class AuthService {
                 });
     }
 
+    // FIX 1: Updated return type to Mono<RiderResponseDto>
+    public Mono<RiderResponseDto> createRider(CreateRiderRequestDto request) {
+        String realm = "delivery-realm";
 
+        // 1. Get an Admin Token to talk to Keycloak
+        return getAdminToken().flatMap(adminToken -> {
+            
+            // 2. Prepare the Keycloak User JSON (Auto-verifies email!)
+            String userJson = String.format(
+                "{\"username\":\"%s\",\"email\":\"%s\",\"firstName\":\"%s\",\"enabled\":true,\"emailVerified\":true,\"credentials\":[{\"type\":\"password\",\"value\":\"%s\",\"temporary\":false}]}",
+                request.getEmail(), request.getEmail(), request.getName(), request.getPassword()
+            );
+
+            // 3. Create the User in Keycloak
+            return webClient.post()
+                    .uri(keycloakBaseUrl + "/admin/realms/" + realm + "/users")
+                    .header("Authorization", "Bearer " + adminToken)
+                    .header("Content-Type", "application/json")
+                    .bodyValue(userJson)
+                    .retrieve()
+                    .toBodilessEntity()
+                    .flatMap(response -> {
+                        if (response.getStatusCode().is2xxSuccessful()) {
+                            
+                            // 4. Fetch the new user's Keycloak ID
+                            return webClient.get()
+                                    .uri(keycloakBaseUrl + "/admin/realms/" + realm + "/users?email=" + request.getEmail())
+                                    .header("Authorization", "Bearer " + adminToken)
+                                    .retrieve()
+                                    .bodyToMono(com.fasterxml.jackson.databind.JsonNode.class)
+                                    .flatMap(users -> {
+                                        String keycloakUserId = users.get(0).get("id").asText();
+
+                                        // 5. Fetch the 'RIDER' role ID from Keycloak
+                                        return webClient.get()
+                                                .uri(keycloakBaseUrl + "/admin/realms/" + realm + "/roles/RIDER")
+                                                .header("Authorization", "Bearer " + adminToken)
+                                                .retrieve()
+                                                .bodyToMono(com.fasterxml.jackson.databind.JsonNode.class)
+                                                .flatMap(roleNode -> {
+                                                    
+                                                    // 6. Assign the 'RIDER' role to the user
+                                                    String roleJson = String.format(
+                                                        "[{\"id\":\"%s\",\"name\":\"RIDER\"}]",
+                                                        roleNode.get("id").asText()
+                                                    );
+
+                                                    return webClient.post()
+                                                            .uri(keycloakBaseUrl + "/admin/realms/" + realm + "/users/" + keycloakUserId + "/role-mappings/realm")
+                                                            .header("Authorization", "Bearer " + adminToken)
+                                                            .header("Content-Type", "application/json")
+                                                            .bodyValue(roleJson)
+                                                            .retrieve()
+                                                            .toBodilessEntity()
+                                                            .flatMap(roleAssignResponse -> {
+                                                    
+                                                                // 7. Save User to MongoDB
+                                                                User newRider = User.builder()
+                                                                        .id(keycloakUserId)
+                                                                        .name(request.getName())
+                                                                        .email(request.getEmail())
+                                                                        .phone(request.getPhone())
+                                                                        .role("RIDER")
+                                                                        .build();
+
+                                                                return userRepository.save(newRider)
+                                                                        .flatMap(savedUser -> {
+                                                                            
+                                                                            // 8. IMMEDIATELY Save Vehicle to MongoDB
+                                                                            Vehicle vehicle = Vehicle.builder()
+                                                                                    .riderId(savedUser.getId())
+                                                                                    .type(request.getVehicleType())
+                                                                                    .licenceNumber(request.getLicenceNumber())
+                                                                                    .build();
+                                                                            
+                                                                            return vehicleRepository.save(vehicle)
+                                                                                    // 9. Map BOTH into the new RiderResponseDto
+                                                                                    .map(savedVehicle -> RiderResponseDto.builder()
+                                                                                            .userId(savedUser.getId())
+                                                                                            .name(savedUser.getName())
+                                                                                            .email(savedUser.getEmail())
+                                                                                            .phone(savedUser.getPhone())
+                                                                                            .role(savedUser.getRole())
+                                                                                            .vehicle(VehicleResponseDto.builder()
+                                                                                                    .id(savedVehicle.getId())
+                                                                                                    .riderId(savedVehicle.getRiderId())
+                                                                                                    .type(savedVehicle.getType())
+                                                                                                    .licenceNumber(savedVehicle.getLicenceNumber())
+                                                                                                    .createdAt(savedVehicle.getCreatedAt())
+                                                                                                    .build())
+                                                                                            .build());
+                                                                        });
+                                                            });
+                                                });
+                                    }); // FIX 2: This closing bracket was missing!
+                        } else {
+                            return Mono.error(new RuntimeException("Failed to create user in Keycloak"));
+                        }
+                    });
+        });
+    }
 
     public Mono<UserInfoDto> getUserInfo(String userId) {
         return userRepository.findById(userId)
@@ -205,8 +328,6 @@ public class AuthService {
                         .role(user.getRole())
                         .build());
     }
-    
-    
     
     public Mono<UserInfoDto> updateUserProfile(String userId, UpdateUserRequestDto request) {
         return userRepository.findById(userId)

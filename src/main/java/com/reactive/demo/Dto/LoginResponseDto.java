@@ -13,4 +13,5 @@ public class LoginResponseDto {
     private String name;
     private String role;
     private String token;
+    private String img;
 }
