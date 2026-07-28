@@ -5,6 +5,8 @@ import java.time.LocalDateTime;
 import org.springframework.data.annotation.CreatedDate;
 import org.springframework.data.annotation.Id;
 import org.springframework.data.annotation.LastModifiedDate;
+import org.springframework.data.mongodb.core.index.GeoSpatialIndexType;
+import org.springframework.data.mongodb.core.index.GeoSpatialIndexed;
 import org.springframework.data.mongodb.core.mapping.Document;
 
 import lombok.AllArgsConstructor;
@@ -37,4 +39,9 @@ public class User {
     
     @LastModifiedDate
     private LocalDateTime updatedAt;
+    
+    private String status;
+    
+    private String nrcNumber;
+    
 }

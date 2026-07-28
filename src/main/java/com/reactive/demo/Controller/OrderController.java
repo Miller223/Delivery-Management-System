@@ -1,6 +1,7 @@
 package com.reactive.demo.Controller;
 
 
+import com.reactive.demo.Dto.AdminOrderListDto;
 import com.reactive.demo.Dto.RestResponse;
 import com.reactive.demo.Dto.CustomerApp.OrderDetailResponseDto;
 import com.reactive.demo.Dto.CustomerApp.OrderRequestDto;
@@ -54,6 +55,18 @@ public class OrderController {
                 .flatMap(orders -> ResponseUtils.success(
                         HttpStatus.OK, 
                         "User orders history retrieved",
+                        orders
+                ));
+    }
+    
+    @PreAuthorize("hasRole('ADMIN')")
+    @GetMapping({"", "/"}) // This maps to your base /api/orders path
+    public Mono<ResponseEntity<RestResponse<List<AdminOrderListDto>>>> getAllOrders() {
+        return orderService.getAllOrders()
+                .collectList()
+                .flatMap(orders -> ResponseUtils.success(
+                        HttpStatus.OK, 
+                        "All system orders retrieved",
                         orders
                 ));
     }

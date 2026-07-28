@@ -214,7 +214,6 @@ public class AuthService {
                 });
     }
 
-    // FIX 1: Updated return type to Mono<RiderResponseDto>
     public Mono<RiderResponseDto> createRider(CreateRiderRequestDto request) {
         String realm = "delivery-realm";
 
@@ -277,6 +276,7 @@ public class AuthService {
                                                                         .email(request.getEmail())
                                                                         .phone(request.getPhone())
                                                                         .role("RIDER")
+                                                                        .status("AVAILABLE") // <--- ADD THIS LINE
                                                                         .build();
 
                                                                 return userRepository.save(newRider)
@@ -347,5 +347,21 @@ public class AuthService {
                         .phone(savedUser.getPhone())
                         .role(savedUser.getRole())
                         .build());
+    }
+    
+    public Mono<Void> deleteUserInKeycloak(String userId) {
+        String realm = "delivery-realm";
+
+        return getAdminToken().flatMap(adminToken -> 
+                webClient.delete()
+                        .uri(keycloakBaseUrl + "/admin/realms/" + realm + "/users/" + userId)
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + adminToken)
+                        .retrieve()
+                        .bodyToMono(Void.class)
+        ).onErrorResume(e -> {
+            // If Keycloak throws an error (e.g., user is already deleted), silently ignore it 
+            // so we can still finish cleaning up the MongoDB database!
+            return Mono.empty(); 
+        });
     }
 }

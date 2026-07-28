@@ -3,6 +3,7 @@ package com.reactive.demo.Service.Impl;
 
 
 
+import com.reactive.demo.Dto.AdminOrderListDto;
 import com.reactive.demo.Dto.CustomerApp.OrderDetailItemDto;
 import com.reactive.demo.Dto.CustomerApp.OrderDetailResponseDto;
 import com.reactive.demo.Dto.CustomerApp.OrderItemRequestDto;
@@ -214,6 +215,16 @@ public class OrderServiceImpl implements OrderService {
                             .createdAt(order.getCreatedAt())
                             .build());
                 });
+    }
+    
+    @Override
+    public Flux<AdminOrderListDto> getAllOrders() {
+        return orderRepository.findAllByOrderByCreatedAtDesc()
+                .map(order -> AdminOrderListDto.builder()
+                        .orderId(order.getId())
+                        .totalAmount(order.getTotalAmount())
+                        .status(order.getStatus())
+                        .build());
     }
 
     
