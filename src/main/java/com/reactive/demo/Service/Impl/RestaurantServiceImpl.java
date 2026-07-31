@@ -1,5 +1,6 @@
 package com.reactive.demo.Service.Impl;
 
+import java.util.Arrays;
 import java.util.List;
 
 import org.springframework.beans.factory.annotation.Autowired;
@@ -7,9 +8,13 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 
+import com.reactive.demo.Dto.AdminApp.CreateRestaurantRequestDto;
+import com.reactive.demo.Dto.AdminApp.UpdateRestaurantRequestDto;
 import com.reactive.demo.Dto.CustomerApp.MenusResponseDto;
 import com.reactive.demo.Dto.CustomerApp.RestaurantResponseDto;
 import com.reactive.demo.Dto.Exception.ResourceNotFoundException;
+import com.reactive.demo.Model.GeoLocation;
+import com.reactive.demo.Model.Restaurant;
 import com.reactive.demo.Repository.RestaurantRepository;
 import com.reactive.demo.Service.ResturantService;
 import com.reactive.demo.Utils.Mapper;
@@ -69,6 +74,86 @@ public class RestaurantServiceImpl implements ResturantService{
                     return dto;
                 });
 	}
+	
+	
+	@Override
+    public Mono<RestaurantResponseDto> createRestaurant(CreateRestaurantRequestDto request) {
+        
+        // Note: MongoDB requires [longitude, latitude] exactly in that order!
+        GeoLocation location = GeoLocation.builder()
+                .type("Point")
+                .coordinates(Arrays.asList(request.getLongitude(), request.getLatitude()))
+                .build();
+
+        Restaurant restaurant = Restaurant.builder()
+                .name(request.getName())
+                // --- CHANGED THIS LINE ---
+                .phone(request.getPhone()) 
+                .image(request.getImage())
+                .address(request.getAddress())
+                .location(location)
+                .build();
+
+        return restaurantRepo.save(restaurant)
+                .map(this::mapToDto);
+    }
+
+    @Override
+    public Mono<RestaurantResponseDto> getRestaurantById(String id) {
+        return restaurantRepo.findById(id)
+                .switchIfEmpty(Mono.error(new ResourceNotFoundException("Restaurant not found!")))
+                .map(this::mapToDto);
+    }
+
+    @Override
+    public Mono<RestaurantResponseDto> updateRestaurant(String id, UpdateRestaurantRequestDto request) {
+        return restaurantRepo.findById(id)
+                .switchIfEmpty(Mono.error(new ResourceNotFoundException("Restaurant not found!")))
+                .flatMap(existing -> {
+                    // Only update the fields the Admin actually sent in the JSON payload
+                    if (request.getName() != null) existing.setName(request.getName());
+                    
+                    // --- CHANGED THIS LINE ---
+                    if (request.getPhone() != null) existing.setPhone(request.getPhone());
+                    
+                    if (request.getImage() != null) existing.setImage(request.getImage());
+                    if (request.getAddress() != null) existing.setAddress(request.getAddress());
+                    
+                    // If GPS coords were provided, rebuild the location object
+                    if (request.getLongitude() != null && request.getLatitude() != null) {
+                        existing.setLocation(GeoLocation.builder()
+                                .type("Point")
+                                .coordinates(Arrays.asList(request.getLongitude(), request.getLatitude()))
+                                .build());
+                    }
+                    
+                    return restaurantRepo.save(existing);
+                })
+                .map(this::mapToDto);
+    }
+
+    @Override
+    public Mono<Boolean> deleteRestaurant(String id) {
+        return restaurantRepo.findById(id)
+                .switchIfEmpty(Mono.error(new ResourceNotFoundException("Restaurant not found!")))
+                // theReturn(true) fires only if the delete completes successfully
+                .flatMap(restaurant -> restaurantRepo.delete(restaurant).thenReturn(true));
+    }
+	
+	
+	private RestaurantResponseDto mapToDto(Restaurant restaurant) {
+        RestaurantResponseDto dto = this.mapper.map(restaurant, RestaurantResponseDto.class);
+        dto.setRestaurantId(restaurant.getId());
+        
+        if (restaurant.getLocation() != null && restaurant.getLocation().getCoordinates() != null) {
+            List<Double> coords = restaurant.getLocation().getCoordinates();
+            if (coords.size() >= 2) {
+                dto.setLongitude(coords.get(0)); 
+                dto.setLatitude(coords.get(1));  
+            }
+        }
+        return dto;
+    }
 	
 
 

@@ -12,6 +12,7 @@ import lombok.NoArgsConstructor;
 public class RestaurantResponseDto {
     private String restaurantId; 
     private String name;
+    private String phone; 
     private String image;
     private String address;
     private double latitude;

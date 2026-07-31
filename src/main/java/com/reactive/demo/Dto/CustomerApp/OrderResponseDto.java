@@ -9,4 +9,5 @@ import lombok.Data;
 public class OrderResponseDto {
     private String orderId;
     private String status;
+    private String riderId; 
 }

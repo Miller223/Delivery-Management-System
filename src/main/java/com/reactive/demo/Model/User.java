@@ -44,4 +44,6 @@ public class User {
     
     private String nrcNumber;
     
+    @GeoSpatialIndexed(type = GeoSpatialIndexType.GEO_2DSPHERE)
+    private GeoLocation currentLocation;
 }

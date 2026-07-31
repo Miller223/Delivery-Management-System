@@ -4,6 +4,7 @@ package com.reactive.demo.Service.Impl;
 
 
 import com.reactive.demo.Dto.AdminOrderListDto;
+import com.reactive.demo.Dto.AdminApp.RiderListResponseDto;
 import com.reactive.demo.Dto.CustomerApp.OrderDetailItemDto;
 import com.reactive.demo.Dto.CustomerApp.OrderDetailResponseDto;
 import com.reactive.demo.Dto.CustomerApp.OrderItemRequestDto;
@@ -17,11 +18,18 @@ import com.reactive.demo.Model.OrderItem;
 import com.reactive.demo.Model.Restaurant;
 import com.reactive.demo.Repository.OrderRepository;
 import com.reactive.demo.Repository.RestaurantRepository;
+import com.reactive.demo.Repository.UserRepository;
 import com.reactive.demo.Service.OrderService;
 
 
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.data.geo.Distance;
+import org.springframework.data.geo.Metrics;
+import org.springframework.data.geo.Point;
+import org.springframework.data.redis.connection.RedisGeoCommands;
+import org.springframework.data.redis.core.ReactiveRedisTemplate;
+import org.springframework.data.redis.domain.geo.GeoReference;
 import org.springframework.stereotype.Service;
 
 import reactor.core.publisher.Flux;
@@ -41,6 +49,12 @@ public class OrderServiceImpl implements OrderService {
 	
 	@Autowired
 	RestaurantRepository restaurantRepository;
+	
+	@Autowired
+    UserRepository userRepository;
+	
+	 @Autowired
+	 private ReactiveRedisTemplate<String, String> redisTemplate;
 
 	@Value("${app.delivery.fee-per-km:500.0}")
 	private double deliveryFeePerKm;
@@ -224,6 +238,150 @@ public class OrderServiceImpl implements OrderService {
                         .orderId(order.getId())
                         .totalAmount(order.getTotalAmount())
                         .status(order.getStatus())
+                        .build());
+    }
+    
+    
+    @Override
+    public Mono<RiderListResponseDto> getNearestAvailableRider(String orderId) {
+        return orderRepository.findById(orderId)
+                .switchIfEmpty(Mono.error(new ResourceNotFoundException("Order not found!")))
+                .flatMap(order -> {
+                    // 1. Get the first restaurant in the order to use as the pickup point
+                    String restaurantId = (order.getRestaurantsId() != null && !order.getRestaurantsId().isEmpty()) 
+                            ? order.getRestaurantsId().get(0) : null;
+                            
+                    if (restaurantId == null) {
+                        return Mono.error(new ResourceNotFoundException("Order has no restaurants attached"));
+                    }
+                    
+                    return restaurantRepository.findById(restaurantId);
+                })
+                .switchIfEmpty(Mono.error(new ResourceNotFoundException("Restaurant not found!")))
+                .flatMap(restaurant -> {
+                    // 2. Ensure the restaurant actually has GPS coordinates saved
+                    if (restaurant.getLocation() == null || restaurant.getLocation().getCoordinates() == null) {
+                        return Mono.error(new RuntimeException("Restaurant location is unknown"));
+                    }
+                    
+                    // 3. Extract Longitude and Latitude
+                    double lon = restaurant.getLocation().getCoordinates().get(0);
+                    double lat = restaurant.getLocation().getCoordinates().get(1);
+                    
+                    // 4. Query REDIS for the nearest riders within a 10-Kilometer radius
+                    Point restaurantPoint = new Point(lon, lat);
+                    Distance searchRadius = new Distance(10.0, Metrics.KILOMETERS);
+                    
+                    // 4.5 Use Spring Boot 3 'search' method - Passing Distance directly!
+                    return redisTemplate.opsForGeo().search(
+                            "riders:AVAILABLE", 
+                            GeoReference.fromCoordinate(restaurantPoint), 
+                            searchRadius,
+                            RedisGeoCommands.GeoSearchCommandArgs.newGeoSearchArgs().sortAscending()
+                        )
+                        .next() 
+                        .switchIfEmpty(Mono.error(new ResourceNotFoundException("No available riders found within 10km!")))
+                        .flatMap(geoResult -> {
+                            String closestRiderId = geoResult.getContent().getName();
+                            
+                            // --- ADD THIS SAFETY CHECK ---
+                            return userRepository.findById(closestRiderId)
+                                    .switchIfEmpty(Mono.error(new ResourceNotFoundException("Ghost Rider detected: Found in Redis map but deleted from MongoDB!")));
+                        })
+                            .map(user -> RiderListResponseDto.builder()
+                                    .riderId(user.getId())
+                                    .name(user.getName())
+                                    .phone(user.getPhone())
+                                    .status(user.getStatus())
+                                    .build());
+                });
+    }
+    
+    
+ /// --- 1. NEW METHOD: Admin accepts the order from the customer ---
+    @Override
+    public Mono<OrderResponseDto> adminAcceptOrder(String orderId) {
+        return orderRepository.findById(orderId)
+                .switchIfEmpty(Mono.error(new ResourceNotFoundException("Order not found!")))
+                .flatMap(order -> {
+                    
+                    // --- ADD THIS SAFETY CHECK ---
+                    if (!"PENDING".equalsIgnoreCase(order.getStatus())) {
+                        return Mono.error(new RuntimeException("Order cannot be accepted because it is already in status: " + order.getStatus()));
+                    }
+
+                    // Change status so the restaurant starts cooking
+                    order.setStatus("PREPARING");
+                    return orderRepository.save(order);
+                })
+                .map(savedOrder -> OrderResponseDto.builder()
+                        .orderId(savedOrder.getId())
+                        .status(savedOrder.getStatus())
+                        .riderId(savedOrder.getRiderId())
+                        .build());
+    }
+
+    // --- 2. UPDATED: Admin assigns the rider (WITH STATE VALIDATION) ---
+    @Override
+    public Mono<OrderResponseDto> assignRiderToOrder(String orderId, String riderId) {
+        
+        // 1. FIRST find the order and validate its state to protect the Rider!
+        return orderRepository.findById(orderId)
+                .switchIfEmpty(Mono.error(new ResourceNotFoundException("Order not found!")))
+                .flatMap(order -> {
+                    
+                    // --- ADD THIS SAFETY CHECK ---
+                    if (!"PREPARING".equalsIgnoreCase(order.getStatus())) {
+                        return Mono.error(new RuntimeException("Cannot assign rider: Order is currently " + order.getStatus() + " (Must be PREPARING)"));
+                    }
+
+                    // 2. Order is safe. Now find and update the Rider.
+                    return userRepository.findById(riderId)
+                            .switchIfEmpty(Mono.error(new ResourceNotFoundException("Rider not found!")))
+                            .flatMap(rider -> {
+                                rider.setStatus("BUSY");
+                                return userRepository.save(rider);
+                            })
+                            .then(Mono.defer(() -> {
+                                // 3. Update Order with Rider's ID and OUT_FOR_DELIVERY status
+                                order.setRiderId(riderId);
+                                order.setStatus("OUT_FOR_DELIVERY");
+                                
+                                // 4. Instantly remove them from the AVAILABLE Redis map
+                                redisTemplate.opsForZSet().remove("riders:AVAILABLE", riderId).subscribe();
+                                
+                                return orderRepository.save(order);
+                            }));
+                })
+                .map(savedOrder -> OrderResponseDto.builder()
+                        .orderId(savedOrder.getId())
+                        .status(savedOrder.getStatus())
+                        .riderId(savedOrder.getRiderId()) 
+                        .build());
+    }
+
+    // --- 3. UPDATED: Rider acknowledges the assignment ---
+    @Override
+    public Mono<OrderResponseDto> acceptOrder(String orderId, String riderId) {
+        
+        // The admin already did the heavy lifting! We just verify the rider owns this order.
+        return orderRepository.findById(orderId)
+                .switchIfEmpty(Mono.error(new ResourceNotFoundException("Order not found!")))
+                .flatMap(order -> {
+                    
+                    // Verify that the Admin actually assigned THIS specific rider
+                    if (!riderId.equals(order.getRiderId())) {
+                        return Mono.error(new RuntimeException("Error: You are not assigned to this order!"));
+                    }
+
+                    // Order and Rider statuses REMAIN "OUT_FOR_DELIVERY" and "BUSY".
+                    // We just return the order to the Rider app as a successful acknowledgment!
+                    return Mono.just(order);
+                })
+                .map(savedOrder -> OrderResponseDto.builder()
+                        .orderId(savedOrder.getId())
+                        .status(savedOrder.getStatus())
+                        .riderId(savedOrder.getRiderId())
                         .build());
     }
 

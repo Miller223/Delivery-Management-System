@@ -3,6 +3,7 @@ package com.reactive.demo.Controller;
 
 import com.reactive.demo.Dto.AdminOrderListDto;
 import com.reactive.demo.Dto.RestResponse;
+import com.reactive.demo.Dto.AdminApp.RiderListResponseDto;
 import com.reactive.demo.Dto.CustomerApp.OrderDetailResponseDto;
 import com.reactive.demo.Dto.CustomerApp.OrderRequestDto;
 import com.reactive.demo.Dto.CustomerApp.OrderResponseDto;
@@ -68,6 +69,60 @@ public class OrderController {
                         HttpStatus.OK, 
                         "All system orders retrieved",
                         orders
+                ));
+    }
+    
+    @PreAuthorize("hasRole('ADMIN')")
+    @GetMapping("/{orderId}/nearest-rider")
+    public Mono<ResponseEntity<RestResponse<RiderListResponseDto>>> getNearestRider(@PathVariable String orderId) {
+        return orderService.getNearestAvailableRider(orderId)
+                .flatMap(rider -> ResponseUtils.success(
+                        HttpStatus.OK, 
+                        "Successfully found the closest available rider",
+                        rider
+                ));
+    }
+    
+    
+ // --- ADD THIS NEW ADMIN ACCEPT ENDPOINT ---
+    @PreAuthorize("hasRole('ADMIN')")
+    @PutMapping("/{orderId}/admin-accept")
+    public Mono<ResponseEntity<RestResponse<OrderResponseDto>>> adminAcceptOrder(@PathVariable String orderId) {
+        
+        return orderService.adminAcceptOrder(orderId)
+                .flatMap(response -> ResponseUtils.success(
+                        HttpStatus.OK, 
+                        "Admin successfully accepted the order (Status: PREPARING)",
+                        response
+                ));
+    }
+
+    @PreAuthorize("hasRole('ADMIN')")
+    @PutMapping("/{orderId}/assign/{riderId}")
+    public Mono<ResponseEntity<RestResponse<OrderResponseDto>>> assignRider(
+            @PathVariable String orderId, 
+            @PathVariable String riderId) {
+        
+        return orderService.assignRiderToOrder(orderId, riderId)
+                .flatMap(response -> ResponseUtils.success(
+                        HttpStatus.OK, 
+                        "Rider successfully assigned to order",
+                        response
+                ));
+    }
+
+    // --- ADD THIS NEW ENDPOINT FOR THE RIDER ---
+    @PreAuthorize("hasRole('RIDER')")
+    @PutMapping("/{orderId}/accept/{riderId}")
+    public Mono<ResponseEntity<RestResponse<OrderResponseDto>>> acceptOrder(
+            @PathVariable String orderId, 
+            @PathVariable String riderId) {
+        
+        return orderService.acceptOrder(orderId, riderId)
+                .flatMap(response -> ResponseUtils.success(
+                        HttpStatus.OK, 
+                        "Order successfully accepted",
+                        response
                 ));
     }
 }
