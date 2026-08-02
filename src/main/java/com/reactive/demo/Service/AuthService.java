@@ -216,7 +216,7 @@ public class AuthService {
 
     public Mono<RiderResponseDto> createRider(CreateRiderRequestDto request) {
         String realm = "delivery-realm";
-
+    
         // 1. Get an Admin Token to talk to Keycloak
         return getAdminToken().flatMap(adminToken -> {
             
@@ -275,8 +275,10 @@ public class AuthService {
                                                                         .name(request.getName())
                                                                         .email(request.getEmail())
                                                                         .phone(request.getPhone())
+                                                                        .image(request.getImage()) 
                                                                         .role("RIDER")
-                                                                        .status("AVAILABLE") // <--- ADD THIS LINE
+                                                                        .status("AVAILABLE") 
+                                                                        .nrcNumber(request.getNrcNumber()) // <--- ADDED THIS LINE
                                                                         .build();
 
                                                                 return userRepository.save(newRider)
@@ -295,8 +297,11 @@ public class AuthService {
                                                                                             .userId(savedUser.getId())
                                                                                             .name(savedUser.getName())
                                                                                             .email(savedUser.getEmail())
+                                                                                            .image(savedUser.getImage())
                                                                                             .phone(savedUser.getPhone())
                                                                                             .role(savedUser.getRole())
+                                                                                            .status(savedUser.getStatus()) // <--- ADDED THIS LINE
+                                                                                            .nrcNumber(savedUser.getNrcNumber()) // <--- ADDED THIS LINE
                                                                                             .vehicle(VehicleResponseDto.builder()
                                                                                                     .id(savedVehicle.getId())
                                                                                                     .riderId(savedVehicle.getRiderId())
@@ -308,7 +313,7 @@ public class AuthService {
                                                                         });
                                                             });
                                                 });
-                                    }); // FIX 2: This closing bracket was missing!
+                                    });
                         } else {
                             return Mono.error(new RuntimeException("Failed to create user in Keycloak"));
                         }
@@ -348,7 +353,8 @@ public class AuthService {
                         .role(savedUser.getRole())
                         .build());
     }
-    
+
+    // --- ADD THIS NEW METHOD ---
     public Mono<Void> deleteUserInKeycloak(String userId) {
         String realm = "delivery-realm";
 

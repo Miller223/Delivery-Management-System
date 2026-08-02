@@ -37,6 +37,8 @@ public class SecurityConfig {
 	                        .pathMatchers(HttpMethod.POST, "/api/auth/sign-up").permitAll()
 	                        .pathMatchers(HttpMethod.GET, "/api/restaurants/**").permitAll()
 	                        .pathMatchers("/images/**").permitAll()
+	                     // --- FIX: Make the WebSocket Endpoint completely public! ---
+	                        .pathMatchers("/ws/**").permitAll()
 	                        
 	                        // Authenticated Endpoints
 	                        .pathMatchers(HttpMethod.GET, "/api/auth/user/**").authenticated()

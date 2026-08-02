@@ -10,7 +10,7 @@ import org.springframework.stereotype.Service;
 
 import com.reactive.demo.Dto.AdminApp.CreateRestaurantRequestDto;
 import com.reactive.demo.Dto.AdminApp.UpdateRestaurantRequestDto;
-import com.reactive.demo.Dto.CustomerApp.MenusResponseDto;
+import com.reactive.demo.Dto.CustomerApp.MenuItemResponseDto;
 import com.reactive.demo.Dto.CustomerApp.RestaurantResponseDto;
 import com.reactive.demo.Dto.Exception.ResourceNotFoundException;
 import com.reactive.demo.Model.GeoLocation;
@@ -33,7 +33,7 @@ public class RestaurantServiceImpl implements ResturantService{
 
 
 	@Override
-	public Flux<MenusResponseDto> getAllMenuForRestaurant(String restaurantId) {
+	public Flux<MenuItemResponseDto> getAllMenuForRestaurant(String restaurantId) {
 		// TODO Auto-generated method stub
 		return this.restaurantRepo.findById(restaurantId)
 									.switchIfEmpty(Mono.error(new ResourceNotFoundException("No restaurant found with ID: " + restaurantId)))
@@ -44,7 +44,7 @@ public class RestaurantServiceImpl implements ResturantService{
 					                    }
 										return Flux.fromIterable(restaurant.getMenuItems());
 									}).map(menuItem -> {
-										MenusResponseDto dto = this.mapper.map(menuItem, MenusResponseDto.class);
+										MenuItemResponseDto dto = this.mapper.map(menuItem, MenuItemResponseDto.class);
 										return dto;
 									});
 	}

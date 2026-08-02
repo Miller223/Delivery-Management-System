@@ -8,6 +8,7 @@ import lombok.Data;
 
 @Data
 public class CreateRiderRequestDto {
+    
     @NotBlank(message = "Name is required")
     private String name;
 
@@ -22,7 +23,12 @@ public class CreateRiderRequestDto {
     @Size(min = 6, message = "Password must be at least 6 characters")
     private String password;
     
+    @org.hibernate.validator.constraints.URL(message = "Image must be a valid URL format")
+    private String image;
     
+    @NotBlank(message = "NRC Number is required for identity verification")
+    private String nrcNumber;
+
     @NotBlank(message = "Vehicle type is required (e.g., Bike, Scooter, Car)")
     private String vehicleType;
 

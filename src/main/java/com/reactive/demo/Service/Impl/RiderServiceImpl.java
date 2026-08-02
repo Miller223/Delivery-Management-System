@@ -1,9 +1,8 @@
 package com.reactive.demo.Service.Impl;
 
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.stereotype.Service;
 
 import com.reactive.demo.Dto.AdminApp.RiderListResponseDto;
+import com.reactive.demo.Dto.AdminApp.RiderResponseDto;
 import com.reactive.demo.Dto.AdminApp.UpdateRiderRequestDto;
 import com.reactive.demo.Dto.AdminApp.UpdateRiderResponseDto;
 import com.reactive.demo.Dto.AdminApp.UpdateVehicleRequestDto;
@@ -13,48 +12,25 @@ import com.reactive.demo.Repository.UserRepository;
 import com.reactive.demo.Repository.VehicleRepository;
 import com.reactive.demo.Service.AuthService;
 import com.reactive.demo.Service.RiderService;
-import com.reactive.demo.Utils.Mapper;
-
+import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
 @Service
-public class RiderServiceImpl implements RiderService{
-	
-	@Autowired
-	UserRepository userRepository;
-	
-	@Autowired
-	VehicleRepository vehicleRepository;
-	
-	@Autowired
-	AuthService authService;
-	
-	@Autowired
-	Mapper mapper;
+public class RiderServiceImpl implements RiderService {
 
-	@Override
-    public Mono<VehicleResponseDto> updateRiderVehicle(String riderId, UpdateVehicleRequestDto request) {
-        return vehicleRepository.findByRiderId(riderId)
-                .switchIfEmpty(Mono.error(new ResourceNotFoundException("No vehicle found for this rider.")))
-                .flatMap(existingVehicle -> {
-                    existingVehicle.setType(request.getType());
-                    existingVehicle.setLicenceNumber(request.getLicenceNumber());
-                    
-                    return vehicleRepository.save(existingVehicle);
-                })
-                .map(savedVehicle -> VehicleResponseDto.builder()
-                        .id(savedVehicle.getId())
-                        .riderId(savedVehicle.getRiderId())
-                        .type(savedVehicle.getType())
-                        .licenceNumber(savedVehicle.getLicenceNumber())
-                        .createdAt(savedVehicle.getCreatedAt())
-                        .build());
+    private final UserRepository userRepository;
+    private final VehicleRepository vehicleRepository;
+    private final AuthService authService; 
+
+    public RiderServiceImpl(UserRepository userRepository, VehicleRepository vehicleRepository, AuthService authService) {
+        this.userRepository = userRepository;
+        this.vehicleRepository = vehicleRepository;
+        this.authService = authService;
     }
 
-	@Override
+    @Override
     public Flux<RiderListResponseDto> getAllRiders() {
-       
         return userRepository.findByRole("RIDER")
                 .map(user -> RiderListResponseDto.builder()
                         .riderId(user.getId())
@@ -64,14 +40,36 @@ public class RiderServiceImpl implements RiderService{
                         .build()
                 );
     }
-	
-	
-	@Override
+
+    // --- ADDED: GET RIDER BY ID (With Vehicle Data) ---
+    @Override
+    public Mono<RiderResponseDto> getRiderById(String riderId) {
+        return userRepository.findById(riderId)
+                // Ensure the user is actually a rider!
+                .filter(user -> "RIDER".equals(user.getRole()))
+                .switchIfEmpty(Mono.error(new ResourceNotFoundException("Rider not found!")))
+                .flatMap(user -> 
+                    // Fetch their vehicle to embed in the response
+                    vehicleRepository.findByRiderId(riderId)
+                        .map(vehicle -> VehicleResponseDto.builder()
+                                .id(vehicle.getId())
+                                .riderId(vehicle.getRiderId())
+                                .type(vehicle.getType())
+                                .licenceNumber(vehicle.getLicenceNumber())
+                                .createdAt(vehicle.getCreatedAt())
+                                .build()
+                        )
+                        .map(vehicleDto -> mapToRiderResponse(user, vehicleDto))
+                        // If they don't have a vehicle yet, still return the rider profile safely
+                        .defaultIfEmpty(mapToRiderResponse(user, null))
+                );
+    }
+
+    @Override
     public Mono<UpdateRiderResponseDto> updateRiderProfile(String riderId, UpdateRiderRequestDto request) {
         return userRepository.findById(riderId)
                 .switchIfEmpty(Mono.error(new ResourceNotFoundException("Rider not found in database.")))
                 .flatMap(existingRider -> {
-                    // Update only the fields that were provided in the JSON request
                     if (request.getName() != null) existingRider.setName(request.getName());
                     if (request.getImage() != null) existingRider.setImage(request.getImage());
                     if (request.getPhone() != null) existingRider.setPhone(request.getPhone());
@@ -83,27 +81,55 @@ public class RiderServiceImpl implements RiderService{
                         .riderId(savedRider.getId())
                         .image(savedRider.getImage())
                         .name(savedRider.getName())
-                        .nrcNumber(savedRider.getNrcNumber()) // Map it back to the response here!
+                        .phone(savedRider.getPhone()) // <-- map it to the response!
+                        .email(savedRider.getEmail())
+                        .nrcNumber(savedRider.getNrcNumber()) 
+                        .build());
+    }
+    
+    @Override
+    public Mono<VehicleResponseDto> updateRiderVehicle(String riderId, UpdateVehicleRequestDto request) {
+        return vehicleRepository.findByRiderId(riderId)
+                .switchIfEmpty(Mono.error(new ResourceNotFoundException("No vehicle found for this rider.")))
+                .flatMap(existingVehicle -> {
+                    existingVehicle.setType(request.getType());
+                    existingVehicle.setLicenceNumber(request.getLicenceNumber());
+                    return vehicleRepository.save(existingVehicle);
+                })
+                .map(savedVehicle -> VehicleResponseDto.builder()
+                        .id(savedVehicle.getId())
+                        .riderId(savedVehicle.getRiderId())
+                        .type(savedVehicle.getType())
+                        .licenceNumber(savedVehicle.getLicenceNumber())
+                        .createdAt(savedVehicle.getCreatedAt())
                         .build());
     }
 
-	@Override
+    @Override
     public Mono<Boolean> deleteRider(String riderId) {
         return userRepository.findById(riderId)
                 .switchIfEmpty(Mono.error(new ResourceNotFoundException("Rider not found in database.")))
                 .flatMap(user -> {
-                    // 1. Delete the user document from MongoDB
                     Mono<Void> deleteUser = userRepository.delete(user);
-                    
-                    // 2. Delete their associated vehicle document from MongoDB
                     Mono<Void> deleteVehicle = vehicleRepository.deleteByRiderId(riderId);
-
-                    // 3. Delete the user completely from Keycloak!
                     Mono<Void> deleteKeycloak = authService.deleteUserInKeycloak(riderId);
 
-                    // 4. Execute all three delete operations at the exact same time
                     return Mono.when(deleteUser, deleteVehicle, deleteKeycloak).thenReturn(true);
                 });
     }
 
+    // Helper Method
+    private RiderResponseDto mapToRiderResponse(com.reactive.demo.Model.User user, VehicleResponseDto vehicle) {
+        return RiderResponseDto.builder()
+                .userId(user.getId())
+                .name(user.getName())
+                .image(user.getImage())
+                .phone(user.getPhone())
+                .email(user.getEmail())
+                .role(user.getRole())
+                .status(user.getStatus())
+                .nrcNumber(user.getNrcNumber())
+                .vehicle(vehicle)
+                .build();
+    }
 }

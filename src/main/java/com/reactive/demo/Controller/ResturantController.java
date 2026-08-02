@@ -17,10 +17,13 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.reactive.demo.Dto.RestResponse;
+import com.reactive.demo.Dto.AdminApp.CreateMenuItemRequestDto;
 import com.reactive.demo.Dto.AdminApp.CreateRestaurantRequestDto;
+import com.reactive.demo.Dto.AdminApp.UpdateMenuItemRequestDto;
 import com.reactive.demo.Dto.AdminApp.UpdateRestaurantRequestDto;
-import com.reactive.demo.Dto.CustomerApp.MenusResponseDto;
+import com.reactive.demo.Dto.CustomerApp.MenuItemResponseDto;
 import com.reactive.demo.Dto.CustomerApp.RestaurantResponseDto;
+import com.reactive.demo.Service.MenuItemService;
 import com.reactive.demo.Service.ResturantService;
 import com.reactive.demo.Utils.ResponseUtils;
 
@@ -35,6 +38,9 @@ public class ResturantController {
 	
 	@Autowired
 	ResturantService restaurantService;
+	
+	@Autowired
+	MenuItemService menuItemService;
 	
 	@GetMapping
     public Mono<ResponseEntity<RestResponse<List<RestaurantResponseDto>>>> getAllRestaurants(
@@ -52,14 +58,15 @@ public class ResturantController {
     }
 	
 	@GetMapping("/{restaurantId}")
-	public Mono<ResponseEntity<RestResponse<List<MenusResponseDto>>>> getMenuOfSingleRestaurant(@PathVariable String restaurantId){
-		return this.restaurantService.getAllMenuForRestaurant(restaurantId)
-										.collectList()
-										.flatMap(menuItems ->{
-											return ResponseUtils.success(HttpStatus.OK, "Menu Items fetched successfully", menuItems);
-										});
-		
-	}
+	public Mono<ResponseEntity<RestResponse<List<MenuItemResponseDto>>>> getMenuOfSingleRestaurant(@PathVariable String restaurantId) {
+        return menuItemService.getMenuByRestaurantId(restaurantId)
+                .collectList()
+                .flatMap(menu -> ResponseUtils.success(
+                        HttpStatus.OK, 
+                        "Menu fetched successfully", 
+                        menu
+                ));
+        }
 	
 	
 	@GetMapping("/getRestaurantByID/{id}")
@@ -107,6 +114,54 @@ public class ResturantController {
                 .flatMap(success -> ResponseUtils.success(
                         HttpStatus.OK, 
                         "Restaurant deleted successfully", 
+                        success
+                ));
+    }
+    
+
+
+    // 2. ADMIN: Create Menu Item
+    @PreAuthorize("hasRole('ADMIN')")
+    @PostMapping("/{restaurantId}/menu")
+    public Mono<ResponseEntity<RestResponse<MenuItemResponseDto>>> createMenuItem(
+            @PathVariable String restaurantId,
+            @Valid @RequestBody CreateMenuItemRequestDto request) {
+        
+        return menuItemService.createMenuItem(restaurantId, request)
+                .flatMap(menuItem -> ResponseUtils.success(
+                        HttpStatus.CREATED, 
+                        "Menu item created successfully", 
+                        menuItem
+                ));
+    }
+
+    // 3. ADMIN: Update Menu Item
+    @PreAuthorize("hasRole('ADMIN')")
+    @PutMapping("/{restaurantId}/menu/{menuItemId}")
+    public Mono<ResponseEntity<RestResponse<MenuItemResponseDto>>> updateMenuItem(
+            @PathVariable String restaurantId,
+            @PathVariable String menuItemId,
+            @RequestBody UpdateMenuItemRequestDto request) {
+        
+        return menuItemService.updateMenuItem(restaurantId, menuItemId, request)
+                .flatMap(menuItem -> ResponseUtils.success(
+                        HttpStatus.OK, 
+                        "Menu item updated successfully", 
+                        menuItem
+                ));
+    }
+
+    // 4. ADMIN: Delete Menu Item
+    @PreAuthorize("hasRole('ADMIN')")
+    @DeleteMapping("/{restaurantId}/menu/{menuItemId}")
+    public Mono<ResponseEntity<RestResponse<Boolean>>> deleteMenuItem(
+            @PathVariable String restaurantId,
+            @PathVariable String menuItemId) {
+        
+        return menuItemService.deleteMenuItem(restaurantId, menuItemId)
+                .flatMap(success -> ResponseUtils.success(
+                        HttpStatus.OK, 
+                        "Menu item deleted successfully", 
                         success
                 ));
     }
