@@ -216,7 +216,7 @@ public class AuthService {
 
     public Mono<RiderResponseDto> createRider(CreateRiderRequestDto request) {
         String realm = "delivery-realm";
-    
+
         // 1. Get an Admin Token to talk to Keycloak
         return getAdminToken().flatMap(adminToken -> {
             
@@ -233,6 +233,9 @@ public class AuthService {
                     .header("Content-Type", "application/json")
                     .bodyValue(userJson)
                     .retrieve()
+                    // --- ADD THIS LINE TO CATCH THE DUPLICATE EMAIL ---
+                    .onStatus(status -> status.value() == 409, 
+                              response -> Mono.error(new AuthenticationFailedException("Email address is already in use by another user.")))
                     .toBodilessEntity()
                     .flatMap(response -> {
                         if (response.getStatusCode().is2xxSuccessful()) {
@@ -275,10 +278,10 @@ public class AuthService {
                                                                         .name(request.getName())
                                                                         .email(request.getEmail())
                                                                         .phone(request.getPhone())
-                                                                        .image(request.getImage()) 
+                                                                        .image(request.getImage()) // <--- ADD THIS LINE
                                                                         .role("RIDER")
                                                                         .status("AVAILABLE") 
-                                                                        .nrcNumber(request.getNrcNumber()) // <--- ADDED THIS LINE
+                                                                        .nrcNumber(request.getNrcNumber()) 
                                                                         .build();
 
                                                                 return userRepository.save(newRider)
@@ -297,7 +300,6 @@ public class AuthService {
                                                                                             .userId(savedUser.getId())
                                                                                             .name(savedUser.getName())
                                                                                             .email(savedUser.getEmail())
-                                                                                            .image(savedUser.getImage())
                                                                                             .phone(savedUser.getPhone())
                                                                                             .role(savedUser.getRole())
                                                                                             .status(savedUser.getStatus()) // <--- ADDED THIS LINE
@@ -313,7 +315,7 @@ public class AuthService {
                                                                         });
                                                             });
                                                 });
-                                    });
+                                    }); // FIX 2: This closing bracket was missing!
                         } else {
                             return Mono.error(new RuntimeException("Failed to create user in Keycloak"));
                         }

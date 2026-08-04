@@ -4,6 +4,9 @@ package com.reactive.demo.Service.Impl;
 
 
 import com.reactive.demo.Dto.AdminOrderListDto;
+import com.reactive.demo.Dto.AdminApp.AdminOrderDetailResponseDto;
+import com.reactive.demo.Dto.AdminApp.OrderCustomerInfoDto;
+import com.reactive.demo.Dto.AdminApp.OrderRiderInfoDto;
 import com.reactive.demo.Dto.AdminApp.RiderListResponseDto;
 import com.reactive.demo.Dto.CustomerApp.OrderDetailItemDto;
 import com.reactive.demo.Dto.CustomerApp.OrderDetailResponseDto;
@@ -11,6 +14,7 @@ import com.reactive.demo.Dto.CustomerApp.OrderItemRequestDto;
 import com.reactive.demo.Dto.CustomerApp.OrderRequestDto;
 import com.reactive.demo.Dto.CustomerApp.OrderResponseDto;
 import com.reactive.demo.Dto.CustomerApp.UserOrderHistoryDto;
+import com.reactive.demo.Dto.Exception.OrderProcessFailException;
 import com.reactive.demo.Dto.Exception.ResourceNotFoundException;
 import com.reactive.demo.Model.DeliveryLocation;
 import com.reactive.demo.Model.Order;
@@ -31,6 +35,8 @@ import org.springframework.data.redis.connection.RedisGeoCommands;
 import org.springframework.data.redis.core.ReactiveRedisTemplate;
 import org.springframework.data.redis.domain.geo.GeoReference;
 import org.springframework.stereotype.Service;
+
+import com.reactive.demo.Model.User;
 
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
@@ -377,6 +383,106 @@ public class OrderServiceImpl implements OrderService {
                     // Order and Rider statuses REMAIN "OUT_FOR_DELIVERY" and "BUSY".
                     // We just return the order to the Rider app as a successful acknowledgment!
                     return Mono.just(order);
+                })
+                .map(savedOrder -> OrderResponseDto.builder()
+                        .orderId(savedOrder.getId())
+                        .status(savedOrder.getStatus())
+                        .riderId(savedOrder.getRiderId())
+                        .build());
+    }
+    
+    
+    @Override
+    public Mono<AdminOrderDetailResponseDto> getAdminOrderDetails(String orderId) {
+        return orderRepository.findById(orderId)
+                .switchIfEmpty(Mono.error(new ResourceNotFoundException("Order not found!")))
+                .flatMap(order -> {
+                    // 1. Fetch the Customer who placed the order
+                    Mono<User> customerMono = userRepository.findById(order.getCustomerId())
+                            .defaultIfEmpty(new User()); // Safe fallback
+
+                    // 2. Fetch the Rider (if assigned, otherwise return an empty Mono)
+                    Mono<User> riderMono = order.getRiderId() != null 
+                            ? userRepository.findById(order.getRiderId())
+                            : Mono.empty();
+
+                    // 3. Zip everything together to build the ultimate Admin response concurrently
+                    return Mono.zip(Mono.just(order), customerMono, riderMono.defaultIfEmpty(new User()))
+                            .map(tuple -> {
+                                Order o = tuple.getT1();
+                                User customer = tuple.getT2();
+                                User rider = tuple.getT3();
+
+                                // Map Customer Info & GPS Coordinates
+                                OrderCustomerInfoDto customerInfo = OrderCustomerInfoDto.builder()
+                                        .userId(customer.getId())
+                                        .name(customer.getName())
+                                        // Prioritize the shipping phone entered at checkout, fallback to account phone
+                                        .phone(o.getShippingPhone() != null ? o.getShippingPhone() : customer.getPhone())
+                                        .latitude(o.getDeliveryLocation() != null ? o.getDeliveryLocation().getLatitude() : null)
+                                        .longitude(o.getDeliveryLocation() != null ? o.getDeliveryLocation().getLongitude() : null)
+                                        .build();
+
+                                // Map Rider Info (Only if a rider has actually been assigned!)
+                                OrderRiderInfoDto riderInfo = rider.getId() != null ? OrderRiderInfoDto.builder()
+                                        .riderId(rider.getId())
+                                        .name(rider.getName())
+                                        .phone(rider.getPhone())
+                                        .build() : null;
+
+                                // Map the food items
+                                List<OrderDetailItemDto> mappedItems = o.getItems().stream()
+                                        .map(item -> OrderDetailItemDto.builder()
+                                                .restaurantId(item.getRestaurantId())
+                                                .name(item.getName())
+                                                .image(item.getImage())
+                                                .quantity(item.getQuantity())
+                                                .priceAtPurchase(item.getPriceAtPurchase())
+                                                .build())
+                                        .collect(Collectors.toList());
+
+                                // Build Final Admin Response
+                                return AdminOrderDetailResponseDto.builder()
+                                        .orderId(o.getId())
+                                        .status(o.getStatus())
+                                        .totalAmount(o.getTotalAmount())
+                                        .deliveryAddress(o.getDeliveryLocation() != null ? o.getDeliveryLocation().getAddress() : null)
+                                        .createdAt(o.getCreatedAt())
+                                        .customer(customerInfo)
+                                        .rider(riderInfo)
+                                        .items(mappedItems)
+                                        .build();
+                            });
+                });
+    }
+    
+    
+    @Override
+    public Mono<OrderResponseDto> adminRejectOrder(String orderId) {
+        return orderRepository.findById(orderId)
+                .switchIfEmpty(Mono.error(new ResourceNotFoundException("Order not found!")))
+                .flatMap(order -> {
+                    
+                    // Safety check: Cannot reject if already finished
+                    if ("DELIVERED".equalsIgnoreCase(order.getStatus()) || "CANCELLED".equalsIgnoreCase(order.getStatus())) {
+                        return Mono.error(new OrderProcessFailException("Order cannot be rejected because it is already: " + order.getStatus()));
+                    }
+
+                    // Change status
+                    order.setStatus("CANCELLED");
+
+                    // If a rider was already assigned, we must free them up!
+                    if (order.getRiderId() != null) {
+                        return userRepository.findById(order.getRiderId())
+                                .flatMap(rider -> {
+                                    rider.setStatus("AVAILABLE");
+                                    return userRepository.save(rider);
+                                })
+                                .then(orderRepository.save(order));
+                    }
+
+                    // If no rider was assigned yet, just save the cancelled order
+                    return orderRepository.save(order);
                 })
                 .map(savedOrder -> OrderResponseDto.builder()
                         .orderId(savedOrder.getId())

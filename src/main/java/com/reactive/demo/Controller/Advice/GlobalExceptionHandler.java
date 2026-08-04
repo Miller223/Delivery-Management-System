@@ -10,6 +10,7 @@ import com.reactive.demo.Dto.RestResponse;
 import com.reactive.demo.Dto.Exception.AccountNotVerifiedException;
 import com.reactive.demo.Dto.Exception.AuthenticationFailedException;
 import com.reactive.demo.Dto.Exception.IdNotFoundException;
+import com.reactive.demo.Dto.Exception.InvalidOrderStatusException;
 import com.reactive.demo.Dto.Exception.ResourceNotFoundException;
 import com.reactive.demo.Utils.ResponseUtils;
 
@@ -55,6 +56,20 @@ public class GlobalExceptionHandler {
                 "EMAIL_NOT_VERIFIED"           // A strict code for the frontend!
         );
     }
+    
+    
+    @ExceptionHandler(InvalidOrderStatusException.class)
+    public Mono<ResponseEntity<RestResponse<Object>>> handleInvalidOrderStatus(InvalidOrderStatusException ex) {
+        log.warn("Invalid Order Status Action: {}", ex.getMessage());
+        return ResponseUtils.error(
+                HttpStatus.BAD_REQUEST, 
+                "Invalid Order Action", 
+                ex.getMessage()
+        );
+    }
+    
+    
+
 	
 	
     @ExceptionHandler(WebExchangeBindException.class)

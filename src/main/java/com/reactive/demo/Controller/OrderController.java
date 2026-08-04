@@ -3,6 +3,7 @@ package com.reactive.demo.Controller;
 
 import com.reactive.demo.Dto.AdminOrderListDto;
 import com.reactive.demo.Dto.RestResponse;
+import com.reactive.demo.Dto.AdminApp.AdminOrderDetailResponseDto;
 import com.reactive.demo.Dto.AdminApp.RiderListResponseDto;
 import com.reactive.demo.Dto.CustomerApp.OrderDetailResponseDto;
 import com.reactive.demo.Dto.CustomerApp.OrderRequestDto;
@@ -122,6 +123,28 @@ public class OrderController {
                 .flatMap(response -> ResponseUtils.success(
                         HttpStatus.OK, 
                         "Order successfully accepted",
+                        response
+                ));
+    }
+    
+    @PreAuthorize("hasRole('ADMIN')")
+    @PutMapping("/{orderId}/admin-reject")
+    public Mono<ResponseEntity<RestResponse<OrderResponseDto>>> adminRejectOrder(@PathVariable String orderId) {
+        return orderService.adminRejectOrder(orderId)
+                .flatMap(response -> ResponseUtils.success(
+                        HttpStatus.OK, 
+                        "Order rejected/cancelled successfully",
+                        response
+                ));
+    }
+    
+    @PreAuthorize("hasRole('ADMIN')")
+    @GetMapping("/admin/order-details/{orderId}")
+    public Mono<ResponseEntity<RestResponse<AdminOrderDetailResponseDto>>> getAdminOrderDetails(@PathVariable String orderId) {
+        return orderService.getAdminOrderDetails(orderId)
+                .flatMap(response -> ResponseUtils.success(
+                        HttpStatus.OK, 
+                        "Admin order details fetched successfully",
                         response
                 ));
     }
