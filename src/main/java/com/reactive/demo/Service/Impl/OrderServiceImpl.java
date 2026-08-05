@@ -6,8 +6,10 @@ package com.reactive.demo.Service.Impl;
 import com.reactive.demo.Dto.AdminOrderListDto;
 import com.reactive.demo.Dto.AdminApp.AdminOrderDetailResponseDto;
 import com.reactive.demo.Dto.AdminApp.OrderCustomerInfoDto;
+import com.reactive.demo.Dto.AdminApp.OrderRestaurantInfoDto;
 import com.reactive.demo.Dto.AdminApp.OrderRiderInfoDto;
 import com.reactive.demo.Dto.AdminApp.RiderListResponseDto;
+import com.reactive.demo.Dto.AdminApp.VehicleResponseDto;
 import com.reactive.demo.Dto.CustomerApp.OrderDetailItemDto;
 import com.reactive.demo.Dto.CustomerApp.OrderDetailResponseDto;
 import com.reactive.demo.Dto.CustomerApp.OrderItemRequestDto;
@@ -23,6 +25,7 @@ import com.reactive.demo.Model.Restaurant;
 import com.reactive.demo.Repository.OrderRepository;
 import com.reactive.demo.Repository.RestaurantRepository;
 import com.reactive.demo.Repository.UserRepository;
+import com.reactive.demo.Repository.VehicleRepository;
 import com.reactive.demo.Service.OrderService;
 
 
@@ -37,6 +40,7 @@ import org.springframework.data.redis.domain.geo.GeoReference;
 import org.springframework.stereotype.Service;
 
 import com.reactive.demo.Model.User;
+import com.reactive.demo.Model.Vehicle;
 
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
@@ -58,6 +62,9 @@ public class OrderServiceImpl implements OrderService {
 	
 	@Autowired
     UserRepository userRepository;
+	
+	@Autowired
+	VehicleRepository vehicleRepository;
 	
 	 @Autowired
 	 private ReactiveRedisTemplate<String, String> redisTemplate;
@@ -397,40 +404,98 @@ public class OrderServiceImpl implements OrderService {
         return orderRepository.findById(orderId)
                 .switchIfEmpty(Mono.error(new ResourceNotFoundException("Order not found!")))
                 .flatMap(order -> {
-                    // 1. Fetch the Customer who placed the order
+                    // 1. Fetch Customer
                     Mono<User> customerMono = userRepository.findById(order.getCustomerId())
-                            .defaultIfEmpty(new User()); // Safe fallback
+                            .defaultIfEmpty(new User()); 
 
-                    // 2. Fetch the Rider (if assigned, otherwise return an empty Mono)
+                    // 2. Fetch Rider
                     Mono<User> riderMono = order.getRiderId() != null 
                             ? userRepository.findById(order.getRiderId())
                             : Mono.empty();
 
-                    // 3. Zip everything together to build the ultimate Admin response concurrently
-                    return Mono.zip(Mono.just(order), customerMono, riderMono.defaultIfEmpty(new User()))
+                    // --- NEW 3. Fetch Rider's Vehicle ---
+                    Mono<Vehicle> vehicleMono = order.getRiderId() != null
+                            ? vehicleRepository.findByRiderId(order.getRiderId())
+                            : Mono.empty();
+
+                    // 4. Fetch Restaurants
+                    Mono<List<OrderRestaurantInfoDto>> restaurantsMono = order.getRestaurantsId() != null && !order.getRestaurantsId().isEmpty()
+                            ? restaurantRepository.findAllById(order.getRestaurantsId())
+                                .map(r -> {
+                                    Double rLat = null;
+                                    Double rLng = null;
+                                    if (r.getLocation() != null && r.getLocation().getCoordinates() != null && r.getLocation().getCoordinates().size() >= 2) {
+                                        rLng = r.getLocation().getCoordinates().get(0); 
+                                        rLat = r.getLocation().getCoordinates().get(1); 
+                                    }
+                                    return OrderRestaurantInfoDto.builder()
+                                            .restaurantId(r.getId())
+                                            .name(r.getName())
+                                            .phone(r.getPhone())
+                                            .image(r.getImage())
+                                            .address(r.getAddress())
+                                            .latitude(rLat)
+                                            .longitude(rLng)
+                                            .build();
+                                }).collectList()
+                            : Mono.just(new java.util.ArrayList<>());
+
+                    // 5. Zip 5 things together concurrently (Tuple5)
+                    return Mono.zip(
+                                Mono.just(order), 
+                                customerMono, 
+                                riderMono.defaultIfEmpty(new User()), 
+                                restaurantsMono,
+                                vehicleMono.defaultIfEmpty(new Vehicle()) // Add Vehicle to the Zip!
+                            )
                             .map(tuple -> {
                                 Order o = tuple.getT1();
                                 User customer = tuple.getT2();
                                 User rider = tuple.getT3();
+                                List<OrderRestaurantInfoDto> mappedRestaurants = tuple.getT4();
+                                Vehicle vehicle = tuple.getT5();
 
-                                // Map Customer Info & GPS Coordinates
+                                // Map Customer Info
                                 OrderCustomerInfoDto customerInfo = OrderCustomerInfoDto.builder()
                                         .userId(customer.getId())
                                         .name(customer.getName())
-                                        // Prioritize the shipping phone entered at checkout, fallback to account phone
                                         .phone(o.getShippingPhone() != null ? o.getShippingPhone() : customer.getPhone())
                                         .latitude(o.getDeliveryLocation() != null ? o.getDeliveryLocation().getLatitude() : null)
                                         .longitude(o.getDeliveryLocation() != null ? o.getDeliveryLocation().getLongitude() : null)
                                         .build();
 
-                                // Map Rider Info (Only if a rider has actually been assigned!)
+                                // Safe Rider GPS
+                                Double riderLat = null;
+                                Double riderLng = null;
+                                if (rider.getCurrentLocation() != null && rider.getCurrentLocation().getCoordinates() != null && rider.getCurrentLocation().getCoordinates().size() >= 2) {
+                                    riderLng = rider.getCurrentLocation().getCoordinates().get(0);
+                                    riderLat = rider.getCurrentLocation().getCoordinates().get(1);
+                                }
+
+                                // --- NEW: Map Vehicle Info safely ---
+                                VehicleResponseDto mappedVehicle = vehicle.getId() != null ? VehicleResponseDto.builder()
+                                        .id(vehicle.getId())
+                                        .riderId(vehicle.getRiderId())
+                                        .type(vehicle.getType())
+                                        .licenceNumber(vehicle.getLicenceNumber())
+                                        .createdAt(vehicle.getCreatedAt())
+                                        .build() : null;
+
+                                // Map Rider Info (now including Vehicle)
                                 OrderRiderInfoDto riderInfo = rider.getId() != null ? OrderRiderInfoDto.builder()
                                         .riderId(rider.getId())
                                         .name(rider.getName())
                                         .phone(rider.getPhone())
+                                        .email(rider.getEmail())
+                                        .image(rider.getImage())
+                                        .status(rider.getStatus())
+                                        .nrcNumber(rider.getNrcNumber())
+                                        .latitude(riderLat)
+                                        .longitude(riderLng)
+                                        .vehicle(mappedVehicle) // <-- ATTACHED HERE!
                                         .build() : null;
 
-                                // Map the food items
+                                // Map Food Items
                                 List<OrderDetailItemDto> mappedItems = o.getItems().stream()
                                         .map(item -> OrderDetailItemDto.builder()
                                                 .restaurantId(item.getRestaurantId())
@@ -450,11 +515,14 @@ public class OrderServiceImpl implements OrderService {
                                         .createdAt(o.getCreatedAt())
                                         .customer(customerInfo)
                                         .rider(riderInfo)
+                                        .restaurants(mappedRestaurants) 
                                         .items(mappedItems)
                                         .build();
                             });
                 });
     }
+
+                  
     
     
     @Override

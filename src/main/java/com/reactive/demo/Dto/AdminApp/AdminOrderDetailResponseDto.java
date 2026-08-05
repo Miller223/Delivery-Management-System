@@ -19,6 +19,7 @@ public class AdminOrderDetailResponseDto {
     
     // Nested objects to give the Admin full context
     private OrderCustomerInfoDto customer;
+    private List<OrderRestaurantInfoDto> restaurants;
     private OrderRiderInfoDto rider;
     private List<OrderDetailItemDto> items;
 }
