@@ -19,6 +19,7 @@ import com.reactive.demo.Dto.CustomerApp.UserOrderHistoryDto;
 import com.reactive.demo.Dto.Exception.OrderProcessFailException;
 import com.reactive.demo.Dto.Exception.ResourceNotFoundException;
 import com.reactive.demo.Model.DeliveryLocation;
+import com.reactive.demo.Model.MenuItem;
 import com.reactive.demo.Model.Order;
 import com.reactive.demo.Model.OrderItem;
 import com.reactive.demo.Model.Restaurant;
@@ -68,9 +69,15 @@ public class OrderServiceImpl implements OrderService {
 	
 	 @Autowired
 	 private ReactiveRedisTemplate<String, String> redisTemplate;
+	
+	@Value("${app.delivery.base-fee:1500.0}")
+    private double baseDeliveryFee;
 
-	@Value("${app.delivery.fee-per-km:500.0}")
-	private double deliveryFeePerKm;
+    @Value("${app.delivery.fee-per-km:500.0}")
+    private double deliveryFeePerKm;
+    
+    @Value("${app.delivery.multi-stop-fee:500.0}")
+    private double multiStopFee;
 
 
 
@@ -79,7 +86,7 @@ public class OrderServiceImpl implements OrderService {
 
         // Extract UNIQUE restaurant IDs directly from the items list
         List<String> uniqueRestaurantIds = request.getItems().stream()
-                .map(item -> item.getRestaurantId())
+                .map(OrderItemRequestDto::getRestaurantId)
                 .distinct()
                 .collect(Collectors.toList());
 
@@ -100,30 +107,40 @@ public class OrderServiceImpl implements OrderService {
                     double totalDistanceKm = 0.0;
                     List<OrderItem> orderItems = new ArrayList<>();
 
-                    // 2. LOOP THROUGH REQUEST ITEMS AND TRUST THE DB PRICE
+                    // LOOP THROUGH REQUEST ITEMS AND TRUST THE DB PRICE
                     for (OrderItemRequestDto itemDto : request.getItems()) {
                         Restaurant restaurant = restaurantMap.get(itemDto.getRestaurantId());
                         if (restaurant == null) {
                             return Mono.error(new ResourceNotFoundException("Restaurant missing in DB!"));
                         }
 
+                        // Safety check in case the restaurant's menu array is null
+                        if (restaurant.getMenuItems() == null) {
+                            return Mono.error(new ResourceNotFoundException("Fraud Alert: Restaurant '" + restaurant.getName() + "' has an empty menu!"));
+                        }
+
                         // Find the real item inside the Restaurant's DB menu items list by matching the name
-                        com.reactive.demo.Model.MenuItem dbItem = restaurant.getMenuItems().stream()
+                        MenuItem dbItem = restaurant.getMenuItems().stream()
                                 .filter(menuItem -> menuItem.getName().equalsIgnoreCase(itemDto.getName()))
                                 .findFirst()
-                                .orElseThrow(() -> new ResourceNotFoundException("Fraud Alert: Menu item doesn't exist!"));
+                                // Print exactly WHICH item caused the error!
+                                .orElseThrow(() -> new ResourceNotFoundException("Fraud Alert: Menu item '" + itemDto.getName() + "' doesn't exist!"));
 
                         double truePrice = dbItem.getPrice(); // SECURE: Price from DB, not frontend!
+                        
+                        // --- FIX 1: Add the item's total cost to the order total ---
                         itemPricesTotal += (truePrice * itemDto.getQuantity());
 
+                        // --- FIX 2: Add the validated item to the order list ---
                         orderItems.add(OrderItem.builder()
-                                .restaurantId(itemDto.getRestaurantId())
+                                .restaurantId(restaurant.getId())
                                 .name(dbItem.getName())
-                                .image(itemDto.getImage())
+                                .image(dbItem.getImage())
                                 .quantity(itemDto.getQuantity())
-                                .priceAtPurchase(truePrice) // Save the real price
+                                .priceAtPurchase(truePrice)
                                 .build());
-                    }
+                                
+                    } // --- FIX 3: THIS CURLY BRACE WAS MISSING! ---
 
                     // 3. Calculate Delivery Fee based on multiple stops
                     for (Restaurant restaurant : restaurants) {
@@ -138,9 +155,20 @@ public class OrderServiceImpl implements OrderService {
                         }
                     }
 
-                    // Use the injected properties value!
-                    double deliveryFee = totalDistanceKm * deliveryFeePerKm; 
-                    double finalTotalAmount = itemPricesTotal + deliveryFee;
+                    // --- NEW: ADVANCED REVENUE CALCULATION ---
+                    // 1. Base Fee
+                    double calculatedDeliveryFee = baseDeliveryFee; 
+                    
+                    // 2. Add Distance Fee
+                    calculatedDeliveryFee += (totalDistanceKm * deliveryFeePerKm); 
+                    
+                    // 3. Add Multi-Restaurant Surcharge (If order has > 1 restaurant)
+                    if (uniqueRestaurantIds.size() > 1) {
+                        int extraStops = uniqueRestaurantIds.size() - 1;
+                        calculatedDeliveryFee += (extraStops * multiStopFee);
+                    }
+
+                    double finalTotalAmount = itemPricesTotal + calculatedDeliveryFee;
 
                     DeliveryLocation location = DeliveryLocation.builder()
                             .address(request.getDeliveryAddress())
