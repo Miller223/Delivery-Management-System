@@ -11,6 +11,9 @@ import jakarta.validation.Valid;
 
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.web.bind.annotation.*;
 import reactor.core.publisher.Mono;
 
@@ -57,6 +60,47 @@ public class AuthController {
                         "User profile updated successfully", 
                         updatedInfo
                 ));
+    }
+    
+    @PreAuthorize("hasAnyRole('ADMIN', 'CUSTOMER', 'RIDER')")
+    @PutMapping("/user/{userId}/email")
+    public Mono<ResponseEntity<RestResponse<Boolean>>> updateEmail(
+            @PathVariable String userId,
+            @Valid @RequestBody UpdateEmailRequestDto request,
+            @AuthenticationPrincipal Jwt jwt) { 
+        
+        if (isUnauthorized(jwt, userId)) {
+            return ResponseUtils.error(HttpStatus.FORBIDDEN, "Security Violation", "You cannot modify another user's email.");
+        }
+        
+        return authService.updateEmail(userId, request)
+                .flatMap(success -> ResponseUtils.success(HttpStatus.OK, "Email updated! Please check your new inbox to verify your account.", success));
+    }
+
+    // --- 2. PASSWORD UPDATE ENDPOINT ---
+    @PreAuthorize("hasAnyRole('ADMIN', 'CUSTOMER', 'RIDER')")
+    @PutMapping("/user/{userId}/password")
+    public Mono<ResponseEntity<RestResponse<Boolean>>> updatePassword(
+            @PathVariable String userId,
+            @Valid @RequestBody UpdatePasswordRequestDto request,
+            @AuthenticationPrincipal Jwt jwt) { 
+        
+        if (isUnauthorized(jwt, userId)) {
+            return ResponseUtils.error(HttpStatus.FORBIDDEN, "Security Violation", "You cannot modify another user's password.");
+        }
+        
+        return authService.updatePassword(userId, request)
+                .flatMap(success -> ResponseUtils.success(HttpStatus.OK, "Password updated successfully", success));
+    }
+
+    // --- SECURITY HELPER METHOD ---
+    private boolean isUnauthorized(Jwt jwt, String targetUserId) {
+        String loggedInUserId = jwt.getSubject();
+        boolean isAdmin = jwt.getClaimAsStringList("realm_access") != null && 
+                          jwt.getClaimAsStringList("realm_access").contains("ADMIN");
+        
+        // If they are not an Admin, they can only modify their OWN user ID.
+        return !isAdmin && !loggedInUserId.equals(targetUserId);
     }
     
 

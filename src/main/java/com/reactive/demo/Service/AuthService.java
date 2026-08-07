@@ -372,4 +372,96 @@ public class AuthService {
             return Mono.empty(); 
         });
     }
+    
+ // ... inside AuthService.java ...
+
+    // --- 1. EMAIL UPDATE LOGIC ---
+    public Mono<Boolean> updateEmail(String userId, UpdateEmailRequestDto request) {
+        String realm = "delivery-realm";
+
+        return getAdminToken().flatMap(adminToken -> {
+            
+            // FIX: Keycloak requires the "username" field when updating a user via PUT.
+            // Since we use emails for login, we update both the email and the username.
+            // We also set emailVerified to false so Keycloak forces them to verify the new email address.
+            Map<String, Object> emailPayload = Map.of(
+                    "email", request.getNewEmail(),
+                    "username", request.getNewEmail(), // <--- THIS IS THE CRITICAL FIX
+                    "emailVerified", false 
+            );
+
+            return webClient.put()
+                    .uri(keycloakBaseUrl + "/admin/realms/" + realm + "/users/" + userId)
+                    .header(HttpHeaders.AUTHORIZATION, "Bearer " + adminToken)
+                    .contentType(MediaType.APPLICATION_JSON) // Explicitly state we are sending JSON
+                    .bodyValue(emailPayload)
+                    .retrieve()
+                    // If someone else already registered with this new email, Keycloak returns 409 Conflict
+                    .onStatus(status -> status.value() == 409,
+                            response -> Mono.error(new AuthenticationFailedException("Email address is already in use by another account.")))
+                    // Add custom error handling to catch and log any other Keycloak errors (like 400 Bad Request)
+                    .onStatus(status -> status.is4xxClientError(),
+                            response -> response.bodyToMono(String.class).flatMap(errorBody -> {
+                                System.err.println("Keycloak Update User Error (4xx): " + errorBody);
+                                return Mono.error(new RuntimeException("Failed to update user in Keycloak. See logs."));
+                            }))
+                    .toBodilessEntity()
+                    
+                    // 1a. If successful in Keycloak, immediately sync new email to MongoDB
+                    .then(userRepository.findById(userId)
+                            .flatMap(user -> {
+                                user.setEmail(request.getNewEmail());
+                                return userRepository.save(user);
+                            }))
+                            
+                    // 1b. Trigger Keycloak to send the Verification Email to their NEW address!
+                    .then(webClient.put()
+                            .uri(keycloakBaseUrl + "/admin/realms/" + realm + "/users/" + userId + "/send-verify-email?client_id=delivery-app")
+                            .header(HttpHeaders.AUTHORIZATION, "Bearer " + adminToken)
+                            .retrieve()
+                            .toBodilessEntity()
+                            .onErrorResume(e -> Mono.empty()) // Don't crash if the email server is offline
+                    )
+                    .thenReturn(true);
+        });
+    }
+
+    // --- 2. PASSWORD UPDATE LOGIC ---
+    public Mono<Boolean> updatePassword(String userId, UpdatePasswordRequestDto request) {
+        String realm = "delivery-realm";
+
+        // 2a. Fetch the user's email from MongoDB first
+        return userRepository.findById(userId)
+                .switchIfEmpty(Mono.error(new ResourceNotFoundException("User not found in database")))
+                .flatMap(user -> {
+                    
+                    // 2b. Secretly try to log them in with their OLD password to verify identity!
+                    LoginRequestDto tempLogin = new LoginRequestDto();
+                    tempLogin.setEmail(user.getEmail());
+                    tempLogin.setPassword(request.getOldPassword());
+                    
+                    return login(tempLogin)
+                            // If login fails, we block the password update instantly!
+                            .onErrorMap(e -> new AuthenticationFailedException("Incorrect current password. Update denied."));
+                })
+                
+                // 2c. If the old password was correct, proceed to update Keycloak!
+                .flatMap(loginResponse -> getAdminToken())
+                .flatMap(adminToken -> {
+                    Map<String, Object> passwordPayload = Map.of(
+                            "type", "password",
+                            "value", request.getNewPassword(),
+                            "temporary", false
+                    );
+
+                    return webClient.put()
+                            .uri(keycloakBaseUrl + "/admin/realms/" + realm + "/users/" + userId + "/reset-password")
+                            .header(HttpHeaders.AUTHORIZATION, "Bearer " + adminToken)
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .bodyValue(passwordPayload)
+                            .retrieve()
+                            .toBodilessEntity()
+                            .thenReturn(true);
+                });
+    }
 }
