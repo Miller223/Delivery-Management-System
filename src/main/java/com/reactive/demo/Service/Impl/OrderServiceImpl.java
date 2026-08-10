@@ -18,6 +18,7 @@ import com.reactive.demo.Dto.CustomerApp.OrderResponseDto;
 import com.reactive.demo.Dto.CustomerApp.UserOrderHistoryDto;
 import com.reactive.demo.Dto.Exception.OrderProcessFailException;
 import com.reactive.demo.Dto.Exception.ResourceNotFoundException;
+import com.reactive.demo.Dto.RiderApp.RiderNotificationDto;
 import com.reactive.demo.Model.DeliveryLocation;
 import com.reactive.demo.Model.MenuItem;
 import com.reactive.demo.Model.Order;
@@ -27,6 +28,7 @@ import com.reactive.demo.Repository.OrderRepository;
 import com.reactive.demo.Repository.RestaurantRepository;
 import com.reactive.demo.Repository.UserRepository;
 import com.reactive.demo.Repository.VehicleRepository;
+import com.reactive.demo.Service.NotificationService;
 import com.reactive.demo.Service.OrderService;
 
 
@@ -69,6 +71,9 @@ public class OrderServiceImpl implements OrderService {
 	
 	 @Autowired
 	 private ReactiveRedisTemplate<String, String> redisTemplate;
+	 
+	 @Autowired
+	 NotificationService notificationService;
 	
 	@Value("${app.delivery.base-fee:1500.0}")
     private double baseDeliveryFee;
@@ -392,7 +397,17 @@ public class OrderServiceImpl implements OrderService {
                                 redisTemplate.opsForZSet().remove("riders:AVAILABLE", riderId).subscribe();
                                 
                                 return orderRepository.save(order);
-                            }));
+                            }))
+                            // --- ADD THIS BLOCK RIGHT HERE ---
+                            .doOnSuccess(savedOrder -> {
+                                // 5. FIRE REAL-TIME NOTIFICATION TO THE RIDER!
+                                notificationService.sendNotification(RiderNotificationDto.builder()
+                                        .riderId(riderId)
+                                        .orderId(savedOrder.getId())
+                                        .type("NEW_TASK")
+                                        .message("You have a new active delivery task to complete!")
+                                        .build());
+                            });
                 })
                 .map(savedOrder -> OrderResponseDto.builder()
                         .orderId(savedOrder.getId())

@@ -6,7 +6,6 @@ import com.reactive.demo.Dto.CustomerApp.UserInfoDto;
 import com.reactive.demo.Dto.RestResponse;
 import com.reactive.demo.Service.UserService;
 import com.reactive.demo.Utils.ResponseUtils;
-import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -55,7 +54,7 @@ public class UserController {
     @PutMapping("/{userId}")
     public Mono<ResponseEntity<RestResponse<UserInfoDto>>> updateUserProfile(
             @PathVariable String userId,
-            @Valid @RequestBody UpdateUserRequestDto request) {
+            @RequestBody UpdateUserRequestDto request) {
         
         return userService.updateUserProfile(userId, request)
                 .flatMap(response -> ResponseUtils.success(

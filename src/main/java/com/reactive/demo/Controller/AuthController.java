@@ -9,6 +9,8 @@ import com.reactive.demo.Utils.ResponseUtils;
 
 import jakarta.validation.Valid;
 
+import java.util.List;
+
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -96,8 +98,16 @@ public class AuthController {
     // --- SECURITY HELPER METHOD ---
     private boolean isUnauthorized(Jwt jwt, String targetUserId) {
         String loggedInUserId = jwt.getSubject();
-        boolean isAdmin = jwt.getClaimAsStringList("realm_access") != null && 
-                          jwt.getClaimAsStringList("realm_access").contains("ADMIN");
+        boolean isAdmin = false;
+
+        // 1. Extract the realm_access object as a Map
+        java.util.Map<String, Object> realmAccess = jwt.getClaim("realm_access");
+
+        // 2. Dig into the map to find the "roles" list
+        if (realmAccess != null && realmAccess.containsKey("roles")) {
+            java.util.List<String> roles = (List<String>) realmAccess.get("roles");
+            isAdmin = roles != null && roles.contains("ADMIN");
+        }
         
         // If they are not an Admin, they can only modify their OWN user ID.
         return !isAdmin && !loggedInUserId.equals(targetUserId);

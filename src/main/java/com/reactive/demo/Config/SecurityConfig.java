@@ -8,7 +8,10 @@ import org.springframework.security.config.annotation.web.reactive.EnableWebFlux
 import org.springframework.security.config.web.server.ServerHttpSecurity;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.oauth2.server.resource.authentication.ReactiveJwtAuthenticationConverter;
+import org.springframework.security.oauth2.server.resource.web.server.authentication.ServerBearerTokenAuthenticationConverter;
 import org.springframework.security.web.server.SecurityWebFilterChain;
+import org.springframework.security.web.server.authentication.ServerAuthenticationConverter;
+
 import reactor.core.publisher.Flux;
 
 // ─── NEW IMPORTS FOR EXPLICIT CORS ───
@@ -87,5 +90,12 @@ public class SecurityConfig {
         });
         
         return converter;
+    }
+    
+    @Bean
+    public ServerAuthenticationConverter customTokenExtractor() {
+        ServerBearerTokenAuthenticationConverter defaultConverter = new ServerBearerTokenAuthenticationConverter();
+        defaultConverter.setAllowUriQueryParameter(true);
+        return defaultConverter;
     }
 }
