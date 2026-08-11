@@ -4,11 +4,11 @@ package com.reactive.demo.Controller;
 import com.reactive.demo.Dto.*;
 import com.reactive.demo.Dto.AdminApp.CreateRiderRequestDto;
 import com.reactive.demo.Dto.AdminApp.RiderListResponseDto;
-import com.reactive.demo.Dto.AdminApp.RiderResponseDto;
 import com.reactive.demo.Dto.AdminApp.UpdateRiderRequestDto;
 import com.reactive.demo.Dto.AdminApp.UpdateRiderResponseDto;
 import com.reactive.demo.Dto.AdminApp.UpdateVehicleRequestDto;
 import com.reactive.demo.Dto.AdminApp.VehicleResponseDto;
+import com.reactive.demo.Dto.RiderApp.FullRiderProfileDto;
 import com.reactive.demo.Dto.RiderApp.RiderNotificationDto;
 import com.reactive.demo.Service.AuthService;
 import com.reactive.demo.Service.NotificationService;
@@ -75,15 +75,13 @@ public class RiderController {
                 ));
     }
 
-    // 3. ADMIN & RIDER: Get Single Rider Profile
-    @PreAuthorize("hasAnyRole('ADMIN', 'RIDER')")
-    @GetMapping("/{riderId}")
-    public Mono<ResponseEntity<RestResponse<RiderResponseDto>>> getRiderById(@PathVariable String riderId) {
-        return riderService.getRiderById(riderId)
-                .flatMap(response -> ResponseUtils.success(
+    @GetMapping("/{riderId}/profile")
+    public Mono<ResponseEntity<RestResponse<FullRiderProfileDto>>> getRiderProfile(@PathVariable String riderId) {
+        return riderService.getFullRiderProfile(riderId)
+                .flatMap(profile -> ResponseUtils.success(
                         HttpStatus.OK, 
-                        "Rider details fetched successfully", 
-                        response
+                        "Rider profile fetched successfully", 
+                        profile
                 ));
     }
 

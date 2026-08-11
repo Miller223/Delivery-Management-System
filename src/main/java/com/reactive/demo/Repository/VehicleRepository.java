@@ -11,4 +11,5 @@ public interface VehicleRepository extends ReactiveMongoRepository<Vehicle, Stri
     // We need this to check if the rider already has a vehicle registered!
     Mono<Vehicle> findByRiderId(String riderId);
     Mono<Void> deleteByRiderId(String riderId);
+   
 }

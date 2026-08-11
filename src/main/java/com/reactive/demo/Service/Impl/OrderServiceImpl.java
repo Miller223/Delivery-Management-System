@@ -246,7 +246,8 @@ public class OrderServiceImpl implements OrderService {
     @Override
     public Flux<UserOrderHistoryDto> getUserOrders(String userId) {
         return orderRepository.findByCustomerIdOrderByCreatedAtDesc(userId)
-                .flatMap(order -> {
+                // --- FIX: Change flatMap to flatMapSequential to preserve the DB sorting! ---
+                .flatMapSequential(order -> {
                     // Grab the very first restaurant ID in the order
                     String firstRestaurantId = (order.getRestaurantsId() != null && !order.getRestaurantsId().isEmpty()) 
                             ? order.getRestaurantsId().get(0) : null;
