@@ -14,6 +14,7 @@ import com.reactive.demo.Dto.CustomerApp.OrderDetailItemDto;
 import com.reactive.demo.Dto.CustomerApp.OrderDetailResponseDto;
 import com.reactive.demo.Dto.CustomerApp.OrderItemRequestDto;
 import com.reactive.demo.Dto.CustomerApp.OrderRequestDto;
+import com.reactive.demo.Dto.CustomerApp.OrderRequestV2Dto;
 import com.reactive.demo.Dto.CustomerApp.OrderResponseDto;
 import com.reactive.demo.Dto.CustomerApp.UserOrderHistoryDto;
 import com.reactive.demo.Dto.Exception.OrderProcessFailException;
@@ -209,6 +210,123 @@ public class OrderServiceImpl implements OrderService {
         double c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
         return R * c;
     }
+    
+    
+    @Override
+    public Mono<OrderResponseDto> createOrderV2(OrderRequestV2Dto request) {
+
+        // Extract UNIQUE restaurant IDs directly from the items list
+        List<String> uniqueRestaurantIds = request.getItems().stream()
+                .map(OrderItemRequestDto::getRestaurantId)
+                .distinct()
+                .collect(Collectors.toList());
+
+        // Fetch all those restaurants from the database FIRST
+        return restaurantRepository.findAllById(uniqueRestaurantIds)
+                .collectList()
+                .flatMap(restaurants -> {
+
+                    if (restaurants.isEmpty()) {
+                        return Mono.error(new ResourceNotFoundException("No valid restaurants found in database!"));
+                    }
+
+                    // Create a quick lookup map of Restaurant ID -> Restaurant Object
+                    Map<String, Restaurant> restaurantMap = restaurants.stream()
+                            .collect(Collectors.toMap(Restaurant::getId, r -> r));
+
+                    double itemPricesTotal = 0.0;
+                    double totalDistanceKm = 0.0;
+                    List<OrderItem> orderItems = new ArrayList<>();
+
+                    // LOOP THROUGH REQUEST ITEMS AND TRUST THE DB PRICE
+                    for (OrderItemRequestDto itemDto : request.getItems()) {
+                        Restaurant restaurant = restaurantMap.get(itemDto.getRestaurantId());
+                        if (restaurant == null) {
+                            return Mono.error(new ResourceNotFoundException("Restaurant missing in DB!"));
+                        }
+
+                        // Safety check in case the restaurant's menu array is null
+                        if (restaurant.getMenuItems() == null) {
+                            return Mono.error(new ResourceNotFoundException("Fraud Alert: Restaurant '" + restaurant.getName() + "' has an empty menu!"));
+                        }
+
+                       
+                        MenuItem dbItem = restaurant.getMenuItems().stream()
+                                .filter(menuItem -> menuItem.getId().equals(itemDto.getMenuItemId())) // <-- UPGRADED TO USE ID
+                                .findFirst()
+                                .orElseThrow(() -> new ResourceNotFoundException(
+                                        "Fraud Alert: Menu item ID '" + itemDto.getMenuItemId() + "' doesn't exist!"
+                                ));
+
+                        double truePrice = dbItem.getPrice(); // SECURE: Price from DB, not frontend!
+                        
+                        // Add the item's total cost to the order total
+                        itemPricesTotal += (truePrice * itemDto.getQuantity());
+
+                        // Add the validated item to the order list
+                        orderItems.add(OrderItem.builder()
+                                .restaurantId(restaurant.getId())
+                                .name(dbItem.getName())
+                                .image(dbItem.getImage())
+                                .quantity(itemDto.getQuantity())
+                                .priceAtPurchase(truePrice)
+                                .build());
+                                
+                    } 
+
+                    // 3. Calculate Delivery Fee based on multiple stops
+                    for (Restaurant restaurant : restaurants) {
+                        if (restaurant.getLocation() != null && restaurant.getLocation().getCoordinates() != null) {
+                            double restLon = restaurant.getLocation().getCoordinates().get(0);
+                            double restLat = restaurant.getLocation().getCoordinates().get(1);
+
+                            totalDistanceKm += calculateDistance(
+                                    request.getLatitude(), request.getLongitude(),
+                                    restLat, restLon
+                            );
+                        }
+                    }
+
+                    // --- ADVANCED REVENUE CALCULATION ---
+                    // 1. Base Fee
+                    double calculatedDeliveryFee = baseDeliveryFee; 
+                    
+                    // 2. Add Distance Fee
+                    calculatedDeliveryFee += (totalDistanceKm * deliveryFeePerKm); 
+                    
+                    // 3. Add Multi-Restaurant Surcharge (If order has > 1 restaurant)
+                    if (uniqueRestaurantIds.size() > 1) {
+                        int extraStops = uniqueRestaurantIds.size() - 1;
+                        calculatedDeliveryFee += (extraStops * multiStopFee);
+                    }
+
+                    double finalTotalAmount = itemPricesTotal + calculatedDeliveryFee;
+
+                    DeliveryLocation location = DeliveryLocation.builder()
+                            .address(request.getDeliveryAddress())
+                            .latitude(request.getLatitude())
+                            .longitude(request.getLongitude())
+                            .phone(request.getShippingPhone()) // <-- INJECTED: NEW V2 FIELD
+                            .build();
+
+                    Order newOrder = Order.builder()
+                            .customerId(request.getCustomerId())
+                            .restaurantsId(uniqueRestaurantIds)
+                            .status("PENDING")
+                            .totalAmount((double) Math.round(finalTotalAmount))
+                            .deliveryLocation(location)
+                            .items(orderItems)
+                            .createdAt(LocalDateTime.now())
+                            .paymentImg(request.getPaymentImg()) // <-- INJECTED: NEW V2 FIELD
+                            .build();
+
+                    return orderRepository.save(newOrder);
+                })
+                .map(savedOrder -> OrderResponseDto.builder()
+                        .orderId(savedOrder.getId())
+                        .status(savedOrder.getStatus())
+                        .build());
+    }
 
     @Override
     public Mono<OrderDetailResponseDto> getOrderDetails(String orderId) {
@@ -281,11 +399,22 @@ public class OrderServiceImpl implements OrderService {
     @Override
     public Flux<AdminOrderListDto> getAllOrders() {
         return orderRepository.findAllByOrderByCreatedAtDesc()
-                .map(order -> AdminOrderListDto.builder()
-                        .orderId(order.getId())
-                        .totalAmount(order.getTotalAmount())
-                        .status(order.getStatus())
-                        .build());
+                // Use flatMapSequential to ensure the newest orders stay at the top of the list!
+                .flatMapSequential(order -> 
+                    
+                    // Fetch the user using the customerId
+                    userRepository.findById(order.getCustomerId())
+                            .map(user -> user.getName()) // Extract just the name
+                            .defaultIfEmpty("Unknown Customer") // Safe fallback
+                            
+                            // Build the final DTO with the retrieved name
+                            .map(customerName -> AdminOrderListDto.builder()
+                                    .orderId(order.getId())
+                                    .totalAmount(order.getTotalAmount())
+                                    .status(order.getStatus())
+                                    .customerName(customerName) // Inject the name here
+                                    .build())
+                );
     }
     
     
@@ -503,7 +632,7 @@ public class OrderServiceImpl implements OrderService {
                                 OrderCustomerInfoDto customerInfo = OrderCustomerInfoDto.builder()
                                         .userId(customer.getId())
                                         .name(customer.getName())
-                                        .phone(o.getShippingPhone() != null ? o.getShippingPhone() : customer.getPhone())
+                                        .phone(o.getDeliveryLocation().getPhone() != null ? o.getDeliveryLocation().getPhone() : customer.getPhone())
                                         .latitude(o.getDeliveryLocation() != null ? o.getDeliveryLocation().getLatitude() : null)
                                         .longitude(o.getDeliveryLocation() != null ? o.getDeliveryLocation().getLongitude() : null)
                                         .build();

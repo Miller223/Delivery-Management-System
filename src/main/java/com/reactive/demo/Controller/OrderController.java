@@ -2,15 +2,19 @@ package com.reactive.demo.Controller;
 
 
 import com.reactive.demo.Dto.AdminOrderListDto;
+
 import com.reactive.demo.Dto.RestResponse;
 import com.reactive.demo.Dto.AdminApp.AdminOrderDetailResponseDto;
 import com.reactive.demo.Dto.AdminApp.RiderListResponseDto;
 import com.reactive.demo.Dto.CustomerApp.OrderDetailResponseDto;
 import com.reactive.demo.Dto.CustomerApp.OrderRequestDto;
+import com.reactive.demo.Dto.CustomerApp.OrderRequestV2Dto;
 import com.reactive.demo.Dto.CustomerApp.OrderResponseDto;
 import com.reactive.demo.Dto.CustomerApp.UserOrderHistoryDto;
 import com.reactive.demo.Service.OrderService;
 import com.reactive.demo.Utils.ResponseUtils;
+
+import jakarta.validation.Valid;
 
 import java.util.List;
 
@@ -36,6 +40,18 @@ public class OrderController {
                         HttpStatus.CREATED, 
                         "Order placed successfully",
                         response
+                ));
+    }
+    
+    @PostMapping("/v2/create")
+    public Mono<ResponseEntity<RestResponse<OrderResponseDto>>> createOrderV2(
+            @Valid @RequestBody OrderRequestV2Dto request) {
+            
+        return orderService.createOrderV2(request)
+                .flatMap(order -> ResponseUtils.success(
+                        HttpStatus.CREATED, 
+                        "Order with payment proof created successfully", 
+                        order
                 ));
     }
     

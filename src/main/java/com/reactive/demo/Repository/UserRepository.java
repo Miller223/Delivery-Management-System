@@ -12,5 +12,6 @@ import reactor.core.publisher.Flux;
 @Repository
 public interface UserRepository extends ReactiveMongoRepository<User, String> {
 	Flux<User> findByRole(String role);
+	Flux<User> findByRoleOrderByCreatedAtDesc(String role);
 	
 }

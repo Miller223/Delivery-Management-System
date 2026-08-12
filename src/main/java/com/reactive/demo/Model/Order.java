@@ -36,10 +36,11 @@ public class Order {
     
     private DeliveryLocation deliveryLocation;
     
-    private String shippingPhone;
     
     private List<OrderItem> items;
     
     @CreatedDate
     private LocalDateTime createdAt;
+    
+    private String paymentImg;
 }

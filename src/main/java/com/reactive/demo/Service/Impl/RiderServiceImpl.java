@@ -33,7 +33,8 @@ public class RiderServiceImpl implements RiderService {
 
     @Override
     public Flux<RiderListResponseDto> getAllRiders() {
-        return userRepository.findByRole("RIDER")
+        // --- FIX: Use the new DB-sorted repository method! ---
+        return userRepository.findByRoleOrderByCreatedAtDesc("RIDER")
                 .map(user -> RiderListResponseDto.builder()
                         .riderId(user.getId())
                         .name(user.getName())

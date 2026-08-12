@@ -5,6 +5,7 @@ import com.reactive.demo.Dto.AdminApp.AdminOrderDetailResponseDto;
 import com.reactive.demo.Dto.AdminApp.RiderListResponseDto;
 import com.reactive.demo.Dto.CustomerApp.OrderDetailResponseDto;
 import com.reactive.demo.Dto.CustomerApp.OrderRequestDto;
+import com.reactive.demo.Dto.CustomerApp.OrderRequestV2Dto;
 import com.reactive.demo.Dto.CustomerApp.OrderResponseDto;
 import com.reactive.demo.Dto.CustomerApp.UserOrderHistoryDto;
 
@@ -14,6 +15,8 @@ import reactor.core.publisher.Mono;
 public interface OrderService {
 	
 	Mono<OrderResponseDto> createOrder(OrderRequestDto request);
+	
+	Mono<OrderResponseDto> createOrderV2(OrderRequestV2Dto request);
 
 	Mono<OrderDetailResponseDto> getOrderDetails(String orderId);
 	
@@ -34,6 +37,8 @@ public interface OrderService {
     
  // --- ADD THIS NEW ADMIN METHOD ---
     Mono<AdminOrderDetailResponseDto> getAdminOrderDetails(String orderId);
+
+	
     
     
 	

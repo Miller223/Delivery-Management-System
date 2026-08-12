@@ -24,6 +24,7 @@ import org.springframework.web.reactive.function.BodyInserters;
 import org.springframework.web.reactive.function.client.WebClient;
 import reactor.core.publisher.Mono;
 
+import java.time.LocalDateTime;
 import java.util.Base64;
 import java.util.List;
 import java.util.Map;
@@ -278,7 +279,9 @@ public class AuthService {
                                                                         .name(request.getName())
                                                                         .email(request.getEmail())
                                                                         .phone(request.getPhone())
-                                                                        .image(request.getImage()) // <--- ADD THIS LINE
+                                                                        .image(request.getImage()) 
+                                                                        .createdAt(LocalDateTime.now()) // <-- MANUALLY INJECT THIS
+                                                                        .updatedAt(LocalDateTime.now())// <--- ADD THIS LINE
                                                                         .role("RIDER")
                                                                         .status("AVAILABLE") 
                                                                         .nrcNumber(request.getNrcNumber()) 

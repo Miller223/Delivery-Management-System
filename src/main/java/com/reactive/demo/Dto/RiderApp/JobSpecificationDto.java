@@ -31,6 +31,7 @@ public class JobSpecificationDto {
         private String phone;
         private double latitude;
         private double longitude;
+        private String image;
     }
     
     @Data @Builder public static class ReceiptItemDto {

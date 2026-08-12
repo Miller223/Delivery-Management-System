@@ -122,13 +122,14 @@ public class RiderDashboardServiceImpl implements RiderDashboardService{
                                 return JobSpecificationDto.builder()
                                         .orderId(order.getId())
                                         .status(order.getStatus())
-                                        .pickupLocations(pickupLocations) // <-- Now an Array!
+                                        .pickupLocations(pickupLocations) 
                                         .deliveryDestinationAddress(order.getDeliveryLocation().getAddress())
                                         .recipient(JobSpecificationDto.RecipientDto.builder()
                                                 .name(customer.getName())
-                                                .phone(shippingPhone) // <-- Using Shipping Phone!
+                                                .phone(shippingPhone) 
                                                 .latitude(order.getDeliveryLocation().getLatitude())
                                                 .longitude(order.getDeliveryLocation().getLongitude())
+                                                .image(customer.getImage()) // <-- INJECTED THE IMAGE HERE!
                                                 .build())
                                         .receiptSummary(receiptItems)
                                         .totalCashCollect(order.getTotalAmount())

@@ -9,4 +9,5 @@ public class AdminOrderListDto {
     private String orderId;
     private Double totalAmount;
     private String status;
+    private String customerName;
 }
