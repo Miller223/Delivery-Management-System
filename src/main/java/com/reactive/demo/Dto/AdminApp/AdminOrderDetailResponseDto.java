@@ -15,6 +15,8 @@ public class AdminOrderDetailResponseDto {
     private String status;
     private Double totalAmount;
     private String deliveryAddress;
+    private String shippingPhone; 
+    private String paymentImg;
     private LocalDateTime createdAt;
     
     // Nested objects to give the Admin full context

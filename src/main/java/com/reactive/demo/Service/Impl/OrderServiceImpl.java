@@ -685,6 +685,11 @@ public class OrderServiceImpl implements OrderService {
                                         .status(o.getStatus())
                                         .totalAmount(o.getTotalAmount())
                                         .deliveryAddress(o.getDeliveryLocation() != null ? o.getDeliveryLocation().getAddress() : null)
+                                        
+                                        // --- NEW: INJECT SHIPPING PHONE AND PAYMENT IMAGE ---
+                                        .shippingPhone(o.getDeliveryLocation() != null ? o.getDeliveryLocation().getPhone() : customer.getPhone())
+                                        .paymentImg(o.getPaymentImg())
+                                        
                                         .createdAt(o.getCreatedAt())
                                         .customer(customerInfo)
                                         .rider(riderInfo)
