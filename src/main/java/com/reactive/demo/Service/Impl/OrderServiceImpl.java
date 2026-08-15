@@ -79,7 +79,7 @@ public class OrderServiceImpl implements OrderService {
 	@Value("${app.delivery.base-fee:1500.0}")
     private double baseDeliveryFee;
 
-    @Value("${app.delivery.fee-per-km:500.0}")
+    @Value("${app.delivery.fee-per-km:100.0}")
     private double deliveryFeePerKm;
     
     @Value("${app.delivery.multi-stop-fee:500.0}")
@@ -449,27 +449,29 @@ public class OrderServiceImpl implements OrderService {
                     Distance searchRadius = new Distance(10.0, Metrics.KILOMETERS);
                     
                     // 4.5 Use Spring Boot 3 'search' method - Passing Distance directly!
+                 // 4.5 Use Spring Boot 3 'search' method
                     return redisTemplate.opsForGeo().search(
                             "riders:AVAILABLE", 
                             GeoReference.fromCoordinate(restaurantPoint), 
                             searchRadius,
                             RedisGeoCommands.GeoSearchCommandArgs.newGeoSearchArgs().sortAscending()
                         )
-                        .next() 
-                        .switchIfEmpty(Mono.error(new ResourceNotFoundException("No available riders found within 10km!")))
-                        .flatMap(geoResult -> {
-                            String closestRiderId = geoResult.getContent().getName();
-                            
-                            // --- ADD THIS SAFETY CHECK ---
-                            return userRepository.findById(closestRiderId)
-                                    .switchIfEmpty(Mono.error(new ResourceNotFoundException("Ghost Rider detected: Found in Redis map but deleted from MongoDB!")));
+                        // 1. Process riders in order of closeness
+                        .concatMap(geoResult -> {
+                            String riderId = geoResult.getContent().getName();
+                            return userRepository.findById(riderId);
                         })
-                            .map(user -> RiderListResponseDto.builder()
-                                    .riderId(user.getId())
-                                    .name(user.getName())
-                                    .phone(user.getPhone())
-                                    .status(user.getStatus())
-                                    .build());
+                        // 2. THE SHIELD: Ignore them if Mongo says they are actually BUSY
+                        .filter(user -> "AVAILABLE".equals(user.getStatus())) 
+                        // 3. NOW grab the closest one who passed the test
+                        .next() 
+                        .switchIfEmpty(Mono.error(new ResourceNotFoundException("No actually available riders found within 10km!")))
+                        .map(user -> RiderListResponseDto.builder()
+                                .riderId(user.getId())
+                                .name(user.getName())
+                                .phone(user.getPhone())
+                                .status(user.getStatus())
+                                .build());
                 });
     }
     
@@ -523,10 +525,10 @@ public class OrderServiceImpl implements OrderService {
                                 order.setRiderId(riderId);
                                 order.setStatus("OUT_FOR_DELIVERY");
                                 
-                                // 4. Instantly remove them from the AVAILABLE Redis map
-                                redisTemplate.opsForZSet().remove("riders:AVAILABLE", riderId).subscribe();
-                                
-                                return orderRepository.save(order);
+                                // 4. FIX: Chain the Redis deletion into the reactive stream!
+                                // Use opsForGeo() to match your search method, and chain it with .then()
+                                return redisTemplate.opsForGeo().remove("riders:AVAILABLE", riderId)
+                                        .then(orderRepository.save(order));
                             }))
                             // --- ADD THIS BLOCK RIGHT HERE ---
                             .doOnSuccess(savedOrder -> {

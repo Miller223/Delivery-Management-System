@@ -9,6 +9,7 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 
 import com.reactive.demo.Dto.AdminApp.CreateRestaurantRequestDto;
+import com.reactive.demo.Dto.AdminApp.OrderRestaurantInfoDto;
 import com.reactive.demo.Dto.AdminApp.UpdateRestaurantRequestDto;
 import com.reactive.demo.Dto.CustomerApp.MenuItemResponseDto;
 import com.reactive.demo.Dto.CustomerApp.RestaurantResponseDto;
@@ -48,6 +49,8 @@ public class RestaurantServiceImpl implements ResturantService{
 										return dto;
 									});
 	}
+	
+	
 	
 
 
@@ -153,6 +156,41 @@ public class RestaurantServiceImpl implements ResturantService{
             }
         }
         return dto;
+    }
+	
+	
+	@Override
+    public Flux<OrderRestaurantInfoDto> searchRestaurantsByName(String query) {
+        
+        // 1. Guard clause: instantly return empty if the search is blank
+        if (query == null || query.trim().isEmpty()) {
+            return Flux.empty(); 
+        }
+
+        // 2. Query MongoDB, but strictly limit to 20 to protect server memory
+        return this.restaurantRepo.findByNameContainingIgnoreCase(query.trim())
+                .take(10) // <-- THE PERFECT FIX 
+                .map(r -> {
+                    
+                    // Safely extract coordinates if they exist
+                    Double rLat = null;
+                    Double rLng = null;
+                    if (r.getLocation() != null && r.getLocation().getCoordinates() != null && r.getLocation().getCoordinates().size() >= 2) {
+                        rLng = r.getLocation().getCoordinates().get(0); 
+                        rLat = r.getLocation().getCoordinates().get(1); 
+                    }
+                    
+                    // Map to your existing DTO
+                    return OrderRestaurantInfoDto.builder()
+                            .restaurantId(r.getId())
+                            .name(r.getName())
+                            .phone(r.getPhone())
+                            .image(r.getImage())
+                            .address(r.getAddress())
+                            .latitude(rLat)
+                            .longitude(rLng)
+                            .build();
+                });
     }
 	
 

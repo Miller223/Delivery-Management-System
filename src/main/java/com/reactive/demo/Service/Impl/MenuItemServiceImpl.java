@@ -1,6 +1,7 @@
 package com.reactive.demo.Service.Impl;
 
 import com.reactive.demo.Dto.AdminApp.CreateMenuItemRequestDto;
+import com.reactive.demo.Dto.AdminApp.MenuItemCreateDto;
 import com.reactive.demo.Dto.AdminApp.UpdateMenuItemRequestDto;
 import com.reactive.demo.Dto.CustomerApp.MenuItemResponseDto;
 import com.reactive.demo.Dto.Exception.ResourceNotFoundException;
@@ -12,6 +13,7 @@ import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
 import java.util.ArrayList;
+import java.util.List;
 import java.util.UUID;
 
 @Service
@@ -24,17 +26,25 @@ public class MenuItemServiceImpl implements MenuItemService {
     }
 
     @Override
-    public Flux<MenuItemResponseDto> getMenuByRestaurantId(String restaurantId) {
+    public Flux<MenuItemResponseDto> getMenuByRestaurantId(String restaurantId, int page, int size) {
         return restaurantRepository.findById(restaurantId)
                 .switchIfEmpty(Mono.error(new ResourceNotFoundException("Restaurant not found!")))
-                // FlatMapIterable extracts the embedded list and turns it into a Flux stream
-                .flatMapIterable(restaurant -> {
-                    if (restaurant.getMenuItems() == null) {
-                        return new ArrayList<MenuItem>();
+                .flatMapMany(restaurant -> {
+                    
+                    if (restaurant.getMenuItems() == null || restaurant.getMenuItems().isEmpty()) {
+                        return Flux.empty();
                     }
-                    return restaurant.getMenuItems();
-                })
-                .map(item -> mapToDto(item, restaurantId));
+                    
+                    // Grab the image from the restaurant
+                    String restImage = restaurant.getImage();
+                    
+                    return Flux.fromIterable(restaurant.getMenuItems())
+                            // --- ADD PAGINATION LOGIC HERE ---
+                            .skip((long) page * size) // Skips items from previous pages
+                            .take(size)               // Takes only the items for the current page
+                            // Pass all 3 arguments to mapToDto!
+                            .map(item -> mapToDto(item, restaurantId, restImage)); 
+                });
     }
 
     @Override
@@ -49,7 +59,6 @@ public class MenuItemServiceImpl implements MenuItemService {
                     }
 
                     MenuItem item = MenuItem.builder()
-                            // --- FIX 1: MANUALLY GENERATE THE ID HERE ---
                             .id(UUID.randomUUID().toString()) 
                             .name(request.getName())
                             .description(request.getDescription())
@@ -62,10 +71,10 @@ public class MenuItemServiceImpl implements MenuItemService {
                     // Add it to the embedded array
                     restaurant.getMenuItems().add(item);
 
-                    // Save the entire restaurant document
-                    return restaurantRepository.save(restaurant).thenReturn(item);
-                })
-                .map(item -> mapToDto(item, restaurantId));
+                    // Save and instantly map it to the DTO using all 3 arguments
+                    return restaurantRepository.save(restaurant)
+                            .thenReturn(mapToDto(item, restaurantId, restaurant.getImage()));
+                });
     }
 
     @Override
@@ -80,7 +89,6 @@ public class MenuItemServiceImpl implements MenuItemService {
 
                     // Find the specific item in the embedded array
                     MenuItem existingItem = restaurant.getMenuItems().stream()
-                            // --- FIX 2: ADD NULL SAFETY CHECK ---
                             .filter(item -> item.getId() != null && item.getId().equals(menuItemId))
                             .findFirst()
                             .orElse(null);
@@ -97,10 +105,10 @@ public class MenuItemServiceImpl implements MenuItemService {
                     if (request.getPrice() != null) existingItem.setPrice(request.getPrice());
                     if (request.getIsAvailable() != null) existingItem.setIsAvailable(request.getIsAvailable());
 
-                    // Saving the restaurant inherently saves the changes to the embedded item
-                    return restaurantRepository.save(restaurant).thenReturn(existingItem);
-                })
-                .map(item -> mapToDto(item, restaurantId));
+                    // Save and instantly map it to the DTO using all 3 arguments
+                    return restaurantRepository.save(restaurant)
+                            .thenReturn(mapToDto(existingItem, restaurantId, restaurant.getImage()));
+                });
     }
 
     @Override
@@ -124,17 +132,55 @@ public class MenuItemServiceImpl implements MenuItemService {
                     return restaurantRepository.save(restaurant).thenReturn(true);
                 });
     }
+    
+    
+ // Don't forget to import java.util.UUID!
 
-    private MenuItemResponseDto mapToDto(MenuItem item, String restaurantId) {
+    @Override
+    public Mono<String> addManyMenuItems(String restaurantId, List<MenuItemCreateDto> newItems) {
+        return restaurantRepository.findById(restaurantId)
+                .switchIfEmpty(Mono.error(new ResourceNotFoundException("Restaurant not found with ID: " + restaurantId)))
+                .flatMap(restaurant -> {
+                    
+                    // 1. Initialize the array if this is a brand new restaurant
+                    if (restaurant.getMenuItems() == null) {
+                        restaurant.setMenuItems(new ArrayList<>());
+                    }
+
+                    // 2. Map the DTOs to real MenuItem objects, generating secure UUIDs
+                    List<MenuItem> mappedItems = newItems.stream()
+                            .map(dto -> MenuItem.builder()
+                                    .id(UUID.randomUUID().toString()) // <-- Backend generated ID!
+                                    .name(dto.getName())
+                                    .description(dto.getDescription())
+                                    .image(dto.getImage())
+                                    .category(dto.getCategory() != null ? dto.getCategory() : "General")
+                                    .price(dto.getPrice())
+                                    .isAvailable(dto.getIsAvailable() != null ? dto.getIsAvailable() : true)
+                                    .build())
+                            .toList();
+
+                    // 3. Add all new items to the existing menu array
+                    restaurant.getMenuItems().addAll(mappedItems);
+
+                    // 4. Save the updated restaurant back to MongoDB
+                    return restaurantRepository.save(restaurant);
+                })
+                .map(savedRestaurant -> "Successfully added " + newItems.size() + " menu items to " + savedRestaurant.getName());
+    }
+
+    private MenuItemResponseDto mapToDto(MenuItem item, String restaurantId, String restaurantImage) {
         return MenuItemResponseDto.builder()
                 .id(item.getId())
-                .restaurantId(restaurantId) 
+                .restaurantId(restaurantId)
                 .name(item.getName())
                 .description(item.getDescription())
+                .restaurantImage(restaurantImage) // <-- Set the image here!
                 .image(item.getImage())
                 .category(item.getCategory())
                 .price(item.getPrice())
                 .isAvailable(item.getIsAvailable())
                 .build();
     }
+
 }

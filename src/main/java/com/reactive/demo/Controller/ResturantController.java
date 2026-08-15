@@ -19,6 +19,7 @@ import org.springframework.web.bind.annotation.RestController;
 import com.reactive.demo.Dto.RestResponse;
 import com.reactive.demo.Dto.AdminApp.CreateMenuItemRequestDto;
 import com.reactive.demo.Dto.AdminApp.CreateRestaurantRequestDto;
+import com.reactive.demo.Dto.AdminApp.MenuItemCreateDto;
 import com.reactive.demo.Dto.AdminApp.UpdateMenuItemRequestDto;
 import com.reactive.demo.Dto.AdminApp.UpdateRestaurantRequestDto;
 import com.reactive.demo.Dto.CustomerApp.MenuItemResponseDto;
@@ -58,15 +59,19 @@ public class ResturantController {
     }
 	
 	@GetMapping("/{restaurantId}")
-	public Mono<ResponseEntity<RestResponse<List<MenuItemResponseDto>>>> getMenuOfSingleRestaurant(@PathVariable String restaurantId) {
-        return menuItemService.getMenuByRestaurantId(restaurantId)
+    public Mono<ResponseEntity<RestResponse<List<MenuItemResponseDto>>>> getMenuOfSingleRestaurant(
+            @PathVariable String restaurantId,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "15") int size) {
+            
+        return this.menuItemService.getMenuByRestaurantId(restaurantId, page, size)
                 .collectList()
                 .flatMap(menu -> ResponseUtils.success(
                         HttpStatus.OK, 
                         "Menu fetched successfully", 
                         menu
                 ));
-        }
+    }
 	
 	
 	@GetMapping("/getRestaurantByID/{id}")
@@ -164,6 +169,33 @@ public class ResturantController {
                         "Menu item deleted successfully", 
                         success
                 ));
+    }
+    
+    
+    @PostMapping("/{restaurantId}/menu-items/bulk")
+    public Mono<ResponseEntity<RestResponse<Object>>> addManyMenuItems(
+            @PathVariable String restaurantId,
+            @RequestBody @Valid List<MenuItemCreateDto> request) {
+
+        return menuItemService.addManyMenuItems(restaurantId, request)
+                // Use flatMap because ResponseUtils returns a Mono!
+                .flatMap(message -> 
+                        ResponseUtils.success(HttpStatus.CREATED, message, null)
+                );
+    }
+    
+    
+    @GetMapping("/search")
+    public Mono<ResponseEntity<RestResponse<Object>>> searchRestaurants(@RequestParam("query") String query) {
+        
+        return restaurantService.searchRestaurantsByName(query)
+                .collectList() // This is now 100% safe because the Service limits it to 20 items max!
+                .flatMap(restaurants -> {
+                    if (restaurants.isEmpty()) {
+                        return ResponseUtils.success(HttpStatus.OK, "No restaurants found with the name : " + query, restaurants);
+                    }
+                    return ResponseUtils.success(HttpStatus.OK, "Restaurants found", restaurants);
+                });
     }
 	
 	
