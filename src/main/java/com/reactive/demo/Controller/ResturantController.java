@@ -23,6 +23,7 @@ import com.reactive.demo.Dto.AdminApp.MenuItemCreateDto;
 import com.reactive.demo.Dto.AdminApp.UpdateMenuItemRequestDto;
 import com.reactive.demo.Dto.AdminApp.UpdateRestaurantRequestDto;
 import com.reactive.demo.Dto.CustomerApp.MenuItemResponseDto;
+import com.reactive.demo.Dto.CustomerApp.RestaurantMenuWrapperDto;
 import com.reactive.demo.Dto.CustomerApp.RestaurantResponseDto;
 import com.reactive.demo.Service.MenuItemService;
 import com.reactive.demo.Service.ResturantService;
@@ -59,17 +60,17 @@ public class ResturantController {
     }
 	
 	@GetMapping("/{restaurantId}")
-    public Mono<ResponseEntity<RestResponse<List<MenuItemResponseDto>>>> getMenuOfSingleRestaurant(
+    public Mono<ResponseEntity<RestResponse<RestaurantMenuWrapperDto>>> getMenuOfSingleRestaurant(
             @PathVariable String restaurantId,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "15") int size) {
             
         return this.menuItemService.getMenuByRestaurantId(restaurantId, page, size)
-                .collectList()
-                .flatMap(menu -> ResponseUtils.success(
+                // Just map the wrapper directly into your success response!
+                .flatMap(wrapper -> ResponseUtils.success(
                         HttpStatus.OK, 
                         "Menu fetched successfully", 
-                        menu
+                        wrapper
                 ));
     }
 	

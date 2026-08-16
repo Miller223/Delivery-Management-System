@@ -4,12 +4,12 @@ import com.reactive.demo.Dto.AdminApp.CreateMenuItemRequestDto;
 import com.reactive.demo.Dto.AdminApp.MenuItemCreateDto;
 import com.reactive.demo.Dto.AdminApp.UpdateMenuItemRequestDto;
 import com.reactive.demo.Dto.CustomerApp.MenuItemResponseDto;
+import com.reactive.demo.Dto.CustomerApp.RestaurantMenuWrapperDto;
 import com.reactive.demo.Dto.Exception.ResourceNotFoundException;
 import com.reactive.demo.Model.MenuItem;
 import com.reactive.demo.Repository.RestaurantRepository;
 import com.reactive.demo.Service.MenuItemService;
 import org.springframework.stereotype.Service;
-import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
 import java.util.ArrayList;
@@ -26,24 +26,26 @@ public class MenuItemServiceImpl implements MenuItemService {
     }
 
     @Override
-    public Flux<MenuItemResponseDto> getMenuByRestaurantId(String restaurantId, int page, int size) {
+    public Mono<RestaurantMenuWrapperDto> getMenuByRestaurantId(String restaurantId, int page, int size) {
         return restaurantRepository.findById(restaurantId)
                 .switchIfEmpty(Mono.error(new ResourceNotFoundException("Restaurant not found!")))
-                .flatMapMany(restaurant -> {
+                .map(restaurant -> {
                     
-                    if (restaurant.getMenuItems() == null || restaurant.getMenuItems().isEmpty()) {
-                        return Flux.empty();
-                    }
+                    // 1. Grab the items, or an empty list if there are none
+                    List<MenuItem> allItems = restaurant.getMenuItems() != null ? restaurant.getMenuItems() : new ArrayList<>();
                     
-                    // Grab the image from the restaurant
-                    String restImage = restaurant.getImage();
-                    
-                    return Flux.fromIterable(restaurant.getMenuItems())
-                            // --- ADD PAGINATION LOGIC HERE ---
-                            .skip((long) page * size) // Skips items from previous pages
-                            .take(size)               // Takes only the items for the current page
-                            // Pass all 3 arguments to mapToDto!
-                            .map(item -> mapToDto(item, restaurantId, restImage)); 
+                    // 2. Slice the list for the current page using Java Streams
+                    List<MenuItemResponseDto> paginatedItems = allItems.stream()
+                            .skip((long) page * size)
+                            .limit(size)
+                            .map(item -> mapToDto(item, restaurantId)) 
+                            .collect(java.util.stream.Collectors.toList());
+                            
+                    // 3. Wrap it all together! One image, and the list of sliced items.
+                    return RestaurantMenuWrapperDto.builder()
+                            .restaurantImg(restaurant.getImage()) 
+                            .menuItems(paginatedItems)
+                            .build();
                 });
     }
 
@@ -73,7 +75,7 @@ public class MenuItemServiceImpl implements MenuItemService {
 
                     // Save and instantly map it to the DTO using all 3 arguments
                     return restaurantRepository.save(restaurant)
-                            .thenReturn(mapToDto(item, restaurantId, restaurant.getImage()));
+                            .thenReturn(mapToDto(item, restaurantId));
                 });
     }
 
@@ -107,7 +109,7 @@ public class MenuItemServiceImpl implements MenuItemService {
 
                     // Save and instantly map it to the DTO using all 3 arguments
                     return restaurantRepository.save(restaurant)
-                            .thenReturn(mapToDto(existingItem, restaurantId, restaurant.getImage()));
+                            .thenReturn(mapToDto(existingItem, restaurantId)); 
                 });
     }
 
@@ -169,13 +171,12 @@ public class MenuItemServiceImpl implements MenuItemService {
                 .map(savedRestaurant -> "Successfully added " + newItems.size() + " menu items to " + savedRestaurant.getName());
     }
 
-    private MenuItemResponseDto mapToDto(MenuItem item, String restaurantId, String restaurantImage) {
+    private MenuItemResponseDto mapToDto(MenuItem item, String restaurantId) {
         return MenuItemResponseDto.builder()
                 .id(item.getId())
                 .restaurantId(restaurantId)
                 .name(item.getName())
                 .description(item.getDescription())
-                .restaurantImage(restaurantImage) // <-- Set the image here!
                 .image(item.getImage())
                 .category(item.getCategory())
                 .price(item.getPrice())

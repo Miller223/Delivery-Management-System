@@ -6,7 +6,8 @@ import com.reactive.demo.Dto.AdminApp.CreateMenuItemRequestDto;
 import com.reactive.demo.Dto.AdminApp.MenuItemCreateDto;
 import com.reactive.demo.Dto.AdminApp.UpdateMenuItemRequestDto;
 import com.reactive.demo.Dto.CustomerApp.MenuItemResponseDto;
-import reactor.core.publisher.Flux;
+import com.reactive.demo.Dto.CustomerApp.RestaurantMenuWrapperDto;
+
 import reactor.core.publisher.Mono;
 
 public interface MenuItemService {
@@ -19,5 +20,5 @@ public interface MenuItemService {
 
 	Mono<String> addManyMenuItems(String restaurantId, List<MenuItemCreateDto> newItems);
 
-	Flux<MenuItemResponseDto> getMenuByRestaurantId(String restaurantId, int page, int size);
+	Mono<RestaurantMenuWrapperDto> getMenuByRestaurantId(String restaurantId, int page, int size);
 }
