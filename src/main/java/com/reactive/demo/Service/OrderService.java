@@ -1,8 +1,12 @@
 package com.reactive.demo.Service;
 
+import java.util.List;
+
 import com.reactive.demo.Dto.AdminOrderListDto;
 import com.reactive.demo.Dto.AdminApp.AdminOrderDetailResponseDto;
 import com.reactive.demo.Dto.AdminApp.RiderListResponseDto;
+import com.reactive.demo.Dto.CustomerApp.CalculateFeeRequestDto;
+import com.reactive.demo.Dto.CustomerApp.DeliveryFeeResponseDto;
 import com.reactive.demo.Dto.CustomerApp.OrderDetailResponseDto;
 import com.reactive.demo.Dto.CustomerApp.OrderRequestDto;
 import com.reactive.demo.Dto.CustomerApp.OrderRequestV2Dto;
@@ -22,7 +26,6 @@ public interface OrderService {
 	
 	 Flux<UserOrderHistoryDto> getUserOrders(String userId);
 	 
-	 Flux<AdminOrderListDto> getAllOrders();
 
 	Mono<RiderListResponseDto> getNearestAvailableRider(String orderId);
 	
@@ -37,6 +40,10 @@ public interface OrderService {
     
  // --- ADD THIS NEW ADMIN METHOD ---
     Mono<AdminOrderDetailResponseDto> getAdminOrderDetails(String orderId);
+
+	Mono<DeliveryFeeResponseDto> calculateDeliveryFee(CalculateFeeRequestDto request);
+
+	Mono<List<AdminOrderListDto>> getAllOrders(int page, int size);
 
 	
     

@@ -6,6 +6,8 @@ import com.reactive.demo.Dto.AdminOrderListDto;
 import com.reactive.demo.Dto.RestResponse;
 import com.reactive.demo.Dto.AdminApp.AdminOrderDetailResponseDto;
 import com.reactive.demo.Dto.AdminApp.RiderListResponseDto;
+import com.reactive.demo.Dto.CustomerApp.CalculateFeeRequestDto;
+import com.reactive.demo.Dto.CustomerApp.DeliveryFeeResponseDto;
 import com.reactive.demo.Dto.CustomerApp.OrderDetailResponseDto;
 import com.reactive.demo.Dto.CustomerApp.OrderRequestDto;
 import com.reactive.demo.Dto.CustomerApp.OrderRequestV2Dto;
@@ -77,14 +79,15 @@ public class OrderController {
                 ));
     }
     
-    @PreAuthorize("hasRole('ADMIN')")
-    @GetMapping({"", "/"}) // This maps to your base /api/orders path
-    public Mono<ResponseEntity<RestResponse<List<AdminOrderListDto>>>> getAllOrders() {
-        return orderService.getAllOrders()
-                .collectList()
+    @GetMapping
+    public Mono<ResponseEntity<RestResponse<List<AdminOrderListDto>>>> getAllOrders(
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "15") int size) {
+            
+        return this.orderService.getAllOrders(page, size)
                 .flatMap(orders -> ResponseUtils.success(
                         HttpStatus.OK, 
-                        "All system orders retrieved",
+                        "All system orders retrieved", 
                         orders
                 ));
     }
@@ -162,6 +165,17 @@ public class OrderController {
                         HttpStatus.OK, 
                         "Admin order details fetched successfully",
                         response
+                ));
+    }
+    
+    @PostMapping("/calculate-fee")
+    public Mono<ResponseEntity<RestResponse<DeliveryFeeResponseDto>>> calculateFee(@RequestBody CalculateFeeRequestDto request) {
+        
+        return orderService.calculateDeliveryFee(request)
+                .flatMap(feeDto -> ResponseUtils.success(
+                        HttpStatus.OK, 
+                        "Delivery fee calculated successfully", 
+                        feeDto
                 ));
     }
     

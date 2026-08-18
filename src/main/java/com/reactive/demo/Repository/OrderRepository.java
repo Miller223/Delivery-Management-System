@@ -23,6 +23,8 @@ public interface OrderRepository extends ReactiveMongoRepository<Order, String>{
     // For the Stats Widget (Optimized count queries)
     Mono<Long> countByRiderIdAndStatusIn(String riderId, Collection<String> statuses);
     Mono<Long> countByRiderIdAndStatus(String riderId, String status);
+    
+    Flux<Order> findAllBy(org.springframework.data.domain.Pageable pageable);
 	
 
 }

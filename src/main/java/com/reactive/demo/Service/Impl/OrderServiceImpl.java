@@ -10,6 +10,8 @@ import com.reactive.demo.Dto.AdminApp.OrderRestaurantInfoDto;
 import com.reactive.demo.Dto.AdminApp.OrderRiderInfoDto;
 import com.reactive.demo.Dto.AdminApp.RiderListResponseDto;
 import com.reactive.demo.Dto.AdminApp.VehicleResponseDto;
+import com.reactive.demo.Dto.CustomerApp.CalculateFeeRequestDto;
+import com.reactive.demo.Dto.CustomerApp.DeliveryFeeResponseDto;
 import com.reactive.demo.Dto.CustomerApp.OrderDetailItemDto;
 import com.reactive.demo.Dto.CustomerApp.OrderDetailResponseDto;
 import com.reactive.demo.Dto.CustomerApp.OrderItemRequestDto;
@@ -42,6 +44,10 @@ import org.springframework.data.redis.connection.RedisGeoCommands;
 import org.springframework.data.redis.core.ReactiveRedisTemplate;
 import org.springframework.data.redis.domain.geo.GeoReference;
 import org.springframework.stereotype.Service;
+
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 
 import com.reactive.demo.Model.User;
 import com.reactive.demo.Model.Vehicle;
@@ -84,6 +90,92 @@ public class OrderServiceImpl implements OrderService {
     
     @Value("${app.delivery.multi-stop-fee:500.0}")
     private double multiStopFee;
+    
+    
+    
+    @Override
+    public Mono<DeliveryFeeResponseDto> calculateDeliveryFee(CalculateFeeRequestDto request) {
+        
+        // 1. Extract UNIQUE restaurant IDs directly from the items list
+        List<String> uniqueRestaurantIds = request.getItems().stream()
+                .map(OrderItemRequestDto::getRestaurantId)
+                .distinct()
+                .collect(Collectors.toList());
+
+        // 2. Fetch all those restaurants from the database FIRST
+        return restaurantRepository.findAllById(uniqueRestaurantIds)
+                .collectList()
+                .flatMap(restaurants -> {
+
+                    if (restaurants.isEmpty()) {
+                        return Mono.error(new ResourceNotFoundException("No valid restaurants found in database!"));
+                    }
+
+                    // Create a lookup map of Restaurant ID -> Restaurant Object
+                    Map<String, Restaurant> restaurantMap = restaurants.stream()
+                            .collect(Collectors.toMap(Restaurant::getId, r -> r));
+
+                    double itemPricesTotal = 0.0;
+                    double totalDistanceKm = 0.0;
+
+                    // 3. LOOP THROUGH REQUEST ITEMS AND CALCULATE FOOD TOTAL (Exactly like createOrder)
+                    for (OrderItemRequestDto itemDto : request.getItems()) {
+                        Restaurant restaurant = restaurantMap.get(itemDto.getRestaurantId());
+                        if (restaurant == null || restaurant.getMenuItems() == null) {
+                            return Mono.error(new ResourceNotFoundException("Restaurant or menu missing!"));
+                        }
+
+                        // Find the real item inside the Restaurant's DB menu items list
+                        MenuItem dbItem = restaurant.getMenuItems().stream()
+                                .filter(menuItem -> menuItem.getName().equalsIgnoreCase(itemDto.getName()))
+                                .findFirst()
+                                .orElseThrow(() -> new ResourceNotFoundException("Menu item '" + itemDto.getName() + "' doesn't exist!"));
+
+                        double truePrice = dbItem.getPrice(); 
+                        
+                        // Add the item's total cost to the food total
+                        itemPricesTotal += (truePrice * itemDto.getQuantity());
+                    } 
+
+                    // 4. CALCULATE DELIVERY DISTANCE
+                    for (Restaurant restaurant : restaurants) {
+                        if (restaurant.getLocation() != null && restaurant.getLocation().getCoordinates() != null) {
+                            double restLon = restaurant.getLocation().getCoordinates().get(0);
+                            double restLat = restaurant.getLocation().getCoordinates().get(1);
+
+                            totalDistanceKm += calculateDistance(
+                                    request.getLatitude(), request.getLongitude(),
+                                    restLat, restLon
+                            );
+                        }
+                    }
+
+                    // 5. ADVANCED REVENUE CALCULATION
+                    double calculatedDeliveryFee = baseDeliveryFee; 
+                    calculatedDeliveryFee += (totalDistanceKm * deliveryFeePerKm); 
+                    
+                    if (uniqueRestaurantIds.size() > 1) {
+                        int extraStops = uniqueRestaurantIds.size() - 1;
+                        calculatedDeliveryFee += (extraStops * multiStopFee);
+                    }
+
+                    // 6. BUILD THE FINAL QUOTE
+                    double finalRoundedDeliveryFee = Math.round(calculatedDeliveryFee);
+                    double rawGrandTotal = itemPricesTotal + finalRoundedDeliveryFee;
+                    
+                    // --- NEW: CEILING ROUNDING TO THE NEAREST 10 ---
+                    double finalGrandTotal = Math.ceil(rawGrandTotal / 10.0) * 10.0;
+                    
+                    double formattedDistance = Math.round(totalDistanceKm * 10.0) / 10.0;
+
+                    return Mono.just(DeliveryFeeResponseDto.builder()
+                            .totalDistanceKm(formattedDistance)
+                            .deliveryFee(finalRoundedDeliveryFee)
+                            .itemsTotal(itemPricesTotal)
+                            .grandTotal(finalGrandTotal)
+                            .build());
+                });
+    }
 
 
 
@@ -173,8 +265,14 @@ public class OrderServiceImpl implements OrderService {
                         int extraStops = uniqueRestaurantIds.size() - 1;
                         calculatedDeliveryFee += (extraStops * multiStopFee);
                     }
+                    
+                    
+                 // Inside createOrder method:
+                    double rawTotalAmount = itemPricesTotal + calculatedDeliveryFee;
+                    
+                    // Force the database order to also round up to the nearest 10!
+                    double finalTotalAmount = Math.ceil(rawTotalAmount / 10.0) * 10.0;
 
-                    double finalTotalAmount = itemPricesTotal + calculatedDeliveryFee;
 
                     DeliveryLocation location = DeliveryLocation.builder()
                             .address(request.getDeliveryAddress())
@@ -397,24 +495,26 @@ public class OrderServiceImpl implements OrderService {
     }
     
     @Override
-    public Flux<AdminOrderListDto> getAllOrders() {
-        return orderRepository.findAllByOrderByCreatedAtDesc()
-                // Use flatMapSequential to ensure the newest orders stay at the top of the list!
+    public Mono<List<AdminOrderListDto>> getAllOrders(int page, int size) {
+        
+        // 1. Create the pagination request
+        Pageable pageable = PageRequest.of(page, size, Sort.by(Sort.Direction.DESC, "createdAt"));
+
+        // 2. Fetch the specific page and map the data
+        return orderRepository.findAllBy(pageable)
                 .flatMapSequential(order -> 
-                    
-                    // Fetch the user using the customerId
                     userRepository.findById(order.getCustomerId())
-                            .map(user -> user.getName()) // Extract just the name
-                            .defaultIfEmpty("Unknown Customer") // Safe fallback
-                            
-                            // Build the final DTO with the retrieved name
+                            .map(user -> user.getName()) 
+                            .defaultIfEmpty("Unknown Customer") 
                             .map(customerName -> AdminOrderListDto.builder()
                                     .orderId(order.getId())
                                     .totalAmount(order.getTotalAmount())
                                     .status(order.getStatus())
-                                    .customerName(customerName) // Inject the name here
+                                    .customerName(customerName)
                                     .build())
-                );
+                )
+                // 3. Collect the 15 items into a flat List
+                .collectList(); 
     }
     
     
