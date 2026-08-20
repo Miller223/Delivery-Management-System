@@ -31,7 +31,7 @@ public class ImageController {
         																										
         // 2. Stream the binary parts asynchronously to the local folder
         return filePart.transferTo(targetFile)
-                .then(Mono.just("http://localhost:8080/images/" + uniqueName)); 
-                  // Returns the clean URL string back to your friend's React code
+                // ONLY return the unique filename, no URLs!
+                .then(Mono.just(uniqueName));
     }
 }
