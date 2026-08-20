@@ -29,9 +29,7 @@ services:
     environment:
       - KEYCLOAK_ADMIN=admin
       - KEYCLOAK_ADMIN_PASSWORD=admin
-      - KC_HOSTNAME=localhost
-      - KC_HOSTNAME_PORT=9090
-      - KC_HOSTNAME_STRICT=false
+      - KC_HOSTNAME=http://${EXTERNAL_URL:-192.168.137.1}:9090
     ports:
       - "9090:8080"
     volumes:
@@ -48,7 +46,7 @@ services:
     environment:
       - KEYCLOAK_BASE_URL=http://delivery-keycloak:8080
       - KEYCLOAK_CLIENT_SECRET=${KEYCLOAK_SECRET}
-      # THIS IS THE FIX: Fetch keys from the internal Docker network directly
+      # Fetch keys from the internal Docker network directly
       - SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_JWK_SET_URI=http://delivery-keycloak:8080/realms/delivery-realm/protocol/openid-connect/certs
     depends_on:
       delivery-keycloak:

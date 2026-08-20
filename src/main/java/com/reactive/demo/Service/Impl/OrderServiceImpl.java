@@ -126,10 +126,12 @@ public class OrderServiceImpl implements OrderService {
                         }
 
                         // Find the real item inside the Restaurant's DB menu items list
+                     // Find the real item inside the Restaurant's DB menu items list by ID
                         MenuItem dbItem = restaurant.getMenuItems().stream()
-                                .filter(menuItem -> menuItem.getName().equalsIgnoreCase(itemDto.getName()))
+                                // Safely compare the database ID with the incoming menuId
+                                .filter(menuItem -> menuItem.getId() != null && menuItem.getId().equals(itemDto.getMenuItemId()))
                                 .findFirst()
-                                .orElseThrow(() -> new ResourceNotFoundException("Menu item '" + itemDto.getName() + "' doesn't exist!"));
+                                .orElseThrow(() -> new ResourceNotFoundException("Menu item ID '" + itemDto.getMenuItemId() + "' doesn't exist!"));
 
                         double truePrice = dbItem.getPrice(); 
                         
@@ -398,8 +400,13 @@ public class OrderServiceImpl implements OrderService {
                         calculatedDeliveryFee += (extraStops * multiStopFee);
                     }
 
-                    double finalTotalAmount = itemPricesTotal + calculatedDeliveryFee;
-
+                 // 1. Calculate raw total
+                    double rawTotalAmount = itemPricesTotal + calculatedDeliveryFee;
+                    
+                    // 2. APPLY CEILING ROUNDING TO THE NEAREST 10!
+                    double finalTotalAmount = Math.ceil(rawTotalAmount / 10.0) * 10.0;
+                    
+                    
                     DeliveryLocation location = DeliveryLocation.builder()
                             .address(request.getDeliveryAddress())
                             .latitude(request.getLatitude())
