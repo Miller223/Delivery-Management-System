@@ -39,4 +39,10 @@ public class JobSpecificationDto {
         private String name;
         private double price;
     }
+    
+    
+    private Double itemsTotal;
+    private Double deliveryFee;
+    private Double totalDistanceKm;
+    private Integer extraStops;
 }

@@ -1,5 +1,6 @@
 package com.reactive.demo.Service.Impl;
 
+import java.util.ArrayList;
 import java.util.List;
 
 import org.springframework.beans.factory.annotation.Autowired;
@@ -85,12 +86,11 @@ public class RiderDashboardServiceImpl implements RiderDashboardService{
                                 User customer = tuple.getT1();
                                 List<Restaurant> restaurants = tuple.getT2();
 
-                                // 1. Map ALL restaurants into a list of individual Pickup locations!
+                                // 1. Map ALL restaurants into a list of individual Pickup locations
                                 List<JobSpecificationDto.PickupDto> pickupLocations = restaurants.stream()
                                         .map(restaurant -> {
                                             double lat = 0.0;
                                             double lon = 0.0;
-                                            // Safely extract coordinates from GeoJSON [longitude, latitude]
                                             if (restaurant.getLocation() != null && restaurant.getLocation().getCoordinates() != null) {
                                                 lon = restaurant.getLocation().getCoordinates().get(0);
                                                 lat = restaurant.getLocation().getCoordinates().get(1);
@@ -105,19 +105,46 @@ public class RiderDashboardServiceImpl implements RiderDashboardService{
                                         })
                                         .toList();
 
-                                // 2. Extract Shipping Phone (Fallback to customer profile phone if missing)
+                                // 2. Extract Shipping Phone
                                 String shippingPhone = (order.getDeliveryLocation() != null && order.getDeliveryLocation().getPhone() != null)
                                         ? order.getDeliveryLocation().getPhone()
                                         : customer.getPhone();
 
-                                // 3. Map the receipt items
-                                List<JobSpecificationDto.ReceiptItemDto> receiptItems = order.getItems().stream()
-                                        .map(item -> JobSpecificationDto.ReceiptItemDto.builder()
-                                                .name(item.getName())
-                                                .quantity(item.getQuantity())
-                                                .price(item.getPriceAtPurchase() * item.getQuantity())
-                                                .build())
-                                        .toList();
+                                // 3. Map the receipt items AND calculate the food total
+                                double itemsTotal = 0.0;
+                                List<JobSpecificationDto.ReceiptItemDto> receiptItems = new ArrayList<>();
+                                
+                                for (var item : order.getItems()) {
+                                    double itemCost = item.getPriceAtPurchase() * item.getQuantity();
+                                    itemsTotal += itemCost; 
+                                    
+                                    receiptItems.add(JobSpecificationDto.ReceiptItemDto.builder()
+                                            .name(item.getName())
+                                            .quantity(item.getQuantity())
+                                            .price(itemCost)
+                                            .build());
+                                }
+
+                                // 4. --- NEW: RECALCULATE DISTANCE & STOPS FOR THE RIDER ---
+                                double totalDistanceKm = 0.0;
+                                for (Restaurant restaurant : restaurants) {
+                                    if (restaurant.getLocation() != null && restaurant.getLocation().getCoordinates() != null) {
+                                        double restLon = restaurant.getLocation().getCoordinates().get(0);
+                                        double restLat = restaurant.getLocation().getCoordinates().get(1);
+
+                                        totalDistanceKm += calculateDistance(
+                                                order.getDeliveryLocation().getLatitude(), 
+                                                order.getDeliveryLocation().getLongitude(),
+                                                restLat, restLon
+                                        );
+                                    }
+                                }
+                                
+                                double formattedDistance = Math.round(totalDistanceKm * 10.0) / 10.0;
+                                int extraStops = restaurants.size() > 1 ? restaurants.size() - 1 : 0;
+
+                                // 5. Deduce the exact delivery fee (Includes the ceiling rounding difference)
+                                double deliveryFee = order.getTotalAmount() - itemsTotal;
 
                                 return JobSpecificationDto.builder()
                                         .orderId(order.getId())
@@ -129,9 +156,13 @@ public class RiderDashboardServiceImpl implements RiderDashboardService{
                                                 .phone(shippingPhone) 
                                                 .latitude(order.getDeliveryLocation().getLatitude())
                                                 .longitude(order.getDeliveryLocation().getLongitude())
-                                                .image(customer.getImage()) // <-- INJECTED THE IMAGE HERE!
+                                                .image(customer.getImage()) 
                                                 .build())
                                         .receiptSummary(receiptItems)
+                                        .itemsTotal(itemsTotal)                 // Added Food Total
+                                        .deliveryFee(deliveryFee)               // Added Exact Delivery Fee
+                                        .totalDistanceKm(formattedDistance)     // Added Total Distance
+                                        .extraStops(extraStops)                 // Added Surcharge Stops
                                         .totalCashCollect(order.getTotalAmount())
                                         .build();
                             });
@@ -177,6 +208,17 @@ public class RiderDashboardServiceImpl implements RiderDashboardService{
                         .status(savedOrder.getStatus())
                         .riderId(savedOrder.getRiderId())
                         .build());
+    }
+    
+    private double calculateDistance(double lat1, double lon1, double lat2, double lon2) {
+        final int R = 6371;
+        double latDistance = Math.toRadians(lat2 - lat1);
+        double lonDistance = Math.toRadians(lon2 - lon1);
+        double a = Math.sin(latDistance / 2) * Math.sin(latDistance / 2)
+                + Math.cos(Math.toRadians(lat1)) * Math.cos(Math.toRadians(lat2))
+                * Math.sin(lonDistance / 2) * Math.sin(lonDistance / 2);
+        double c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+        return R * c;
     }
 
 }
